@@ -1,0 +1,8 @@
+services:
+  backend:
+    command: ["pdm","run","python","-m","dpp.run","--mode","docker","--reload","--ngrok-host","${NGROK}"]
+
+  frontend:
+    environment:
+      VITE_HMR_HOST: ${NGROK}
+      VITE_ALLOWED_HOSTS: ${NGROK}

@@ -1,0 +1,54 @@
+services:
+  mongo:
+    image: mongo:7.0
+    profiles: ["db", "full"]
+    ports: ["27017:27017"]
+    volumes: [mongo_data:/data/db]
+    environment:
+      MONGO_INITDB_DATABASE: dpp_prototype
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "mongodb://root:example@localhost:27017/admin", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    profiles: ["full"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports: ["8000:8000"]
+    command: ["pdm","run","python","-m","dpp.run","--mode","docker","--reload"]
+
+    environment:
+      MONGO_USER: root
+      MONGO_PASSWORD: example
+      MONGO_DB: dpp_prototype
+      MONGO_AUTH_SOURCE: admin
+    volumes:
+      - ./backend/src:/project/src:delegated
+
+  frontend:
+    profiles: ["full"]
+    build:
+      context: ./dpp-frontend
+      dockerfile: Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      VITE_API_URL: /api
+      VITE_PROXY_TARGET: http://backend:8000
+    ports: ["5273:5173"]
+    depends_on: [backend]
+    command: ["npm","run","dev","--","--host","0.0.0.0"]
+    volumes:
+      - ./dpp-frontend:/app
+      - node_modules:/app/node_modules
+
+volumes:
+  mongo_data:
+  node_modules:

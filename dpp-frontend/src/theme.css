@@ -1,0 +1,497 @@
+/* src/theme.css
+   Global theme, Bootstrap overrides, utilities, and component polish.
+   Load AFTER bootstrap.min.css so these rules win in the cascade.
+*/
+
+/* ---------- Root variables & base typography ---------- */
+:root {
+  /* Base typography & rendering */
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.55;
+  font-weight: 400;
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Brand palette */
+  --brand-primary: #1e3a8a; /* Academy Blue */
+  --brand-secondary: #64748b; /* Slate */
+  --brand-accent: #0ea5e9; /* Sky accent */
+  --brand-success: #16a34a;
+  --brand-warning: #d97706;
+  --brand-danger: #dc2626;
+
+  /* Neutrals */
+  --neutral-50: #f8fafc;
+  --neutral-100: #f1f5f9;
+  --neutral-200: #e2e8f0;
+  --neutral-300: #cbd5e1;
+  --neutral-700: #334155;
+  --neutral-900: #0f172a;
+
+  /* Bootstrap variable overrides */
+  --bs-body-bg: var(--neutral-50);
+  --bs-body-color: var(--neutral-900);
+  --bs-link-color: var(--brand-primary);
+  --bs-primary: var(--brand-primary);
+  --bs-secondary: var(--brand-secondary);
+  --bs-success: var(--brand-success);
+  --bs-info: var(--brand-accent);
+  --bs-warning: var(--brand-warning);
+  --bs-danger: var(--brand-danger);
+  --bs-border-color: var(--neutral-200);
+  --bs-border-radius: 12px;
+  --bs-border-radius-sm: 10px;
+  --bs-border-radius-lg: 14px;
+
+  /* Surfaces & shadows */
+  --card-bg: #ffffff;
+  --card-shadow: 0 1px 2px rgba(2, 6, 23, 0.04), 0 1px 6px rgba(2, 6, 23, 0.06);
+
+  /* Utility aliases used by custom classes below */
+  --border: var(--bs-border-color);
+  --ok-bg: #ecfdf5; /* green-50 */
+  --ok-fg: #065f46; /* green-700 */
+  --warn-bg: #fff7ed; /* orange-50 */
+  --warn-fg: #9a3412; /* orange-800 */
+  --muted-bg: #f8fafc; /* slate-50 */
+  --muted-fg: #64748b; /* slate-500 */
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 35%, #fff 65%);
+}
+
+/* ---------- Global elements ---------- */
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--bs-body-color);
+  background-color: var(--bs-body-bg);
+}
+
+a {
+  font-weight: 500;
+  color: var(--bs-link-color);
+  text-decoration: none;
+}
+a:hover {
+  color: color-mix(in srgb, var(--bs-link-color) 88%, #000 12%);
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 8px;
+}
+
+/* Typographic scale (subtle, readable) */
+h1 {
+  font-size: clamp(1.75rem, 1.35rem + 1.5vw, 2.25rem);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+h2 {
+  font-size: clamp(1.35rem, 1.1rem + 0.8vw, 1.6rem);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+h3 {
+  font-size: clamp(1.15rem, 1rem + 0.4vw, 1.3rem);
+  line-height: 1.25;
+}
+small,
+.small {
+  color: var(--muted-fg);
+}
+
+/* ---------- Cards ---------- */
+.card {
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius-lg);
+  background-color: var(--card-bg);
+  box-shadow: var(--card-shadow);
+}
+.card-header {
+  border-bottom-color: var(--bs-border-color);
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.02), rgba(2, 6, 23, 0));
+  font-weight: 600;
+}
+.card:hover {
+  /* gentle lift on hover for interactive lists */
+  box-shadow:
+    0 2px 10px rgba(2, 6, 23, 0.06),
+    0 6px 16px rgba(2, 6, 23, 0.06);
+  transition: box-shadow 0.2s ease-in-out;
+}
+
+/* Accent border helpers */
+.card-accent-warning {
+  border-left: 0.4rem solid var(--bs-warning);
+}
+.card-accent-info {
+  border-left: 0.4rem solid var(--bs-info);
+}
+
+/* ---------- Navbar (top & bottom) ---------- */
+header .navbar,
+.navbar.bg-body,
+.navbar.bg-light {
+  background-color: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: saturate(120%) blur(8px);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.navbar.dpp-bottom-nav {
+  background-color: rgba(255, 255, 255, 0.98) !important;
+  border-top: 1px solid var(--bs-border-color);
+}
+
+.nav-pills .nav-link {
+  border-radius: 10px;
+  font-weight: 600;
+}
+.nav-pills .nav-link.active {
+  color: #fff !important;
+  background-color: var(--brand-primary);
+  box-shadow: inset 0 -2px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  border-radius: 12px;
+  font-weight: 600;
+}
+.btn:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.btn-primary {
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
+}
+.btn-primary:hover {
+  background: color-mix(in srgb, var(--brand-primary) 92%, #000 8%);
+  border-color: transparent;
+}
+.btn-outline-secondary {
+  border-color: #cbd5e1;
+  color: var(--neutral-700);
+}
+.btn-outline-secondary:hover {
+  background: var(--neutral-100);
+}
+
+/* Link buttons in headers */
+.btn-link {
+  text-decoration: none;
+}
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Forms ---------- */
+.form-control,
+.form-select,
+.form-check-input {
+  border-radius: 10px;
+  border-color: var(--neutral-300);
+}
+.form-control:focus,
+.form-select:focus {
+  border-color: color-mix(in srgb, var(--brand-primary) 60%, #000 0%);
+  box-shadow: var(--focus-ring);
+}
+.form-label {
+  font-weight: 600;
+  color: var(--neutral-700);
+}
+
+/* ---------- List group ---------- */
+.list-group-item {
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+  border-color: var(--bs-border-color);
+}
+.list-group-item:hover {
+  background-color: rgba(2, 6, 23, 0.03);
+}
+
+/* ---------- Tables ---------- */
+.table {
+  --tbl-head-bg: var(--neutral-100);
+  --tbl-row-hover: rgba(2, 6, 23, 0.03);
+  border-color: var(--bs-border-color);
+}
+.table > :not(caption) > * > th {
+  background: var(--tbl-head-bg);
+  font-weight: 700;
+  color: var(--neutral-900);
+  vertical-align: middle;
+}
+.table > :not(caption) > * > td,
+.table > :not(caption) > * > th {
+  border-color: var(--bs-border-color);
+}
+.table tbody tr:hover {
+  background: var(--tbl-row-hover);
+}
+.table-warning > * > * {
+  background-color: #fff7ed !important;
+}
+
+/* ---------- Badges & banners ---------- */
+.badge {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+}
+.badge.ok {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+.badge.warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+.badge.muted {
+  background: var(--muted-bg);
+  color: var(--muted-fg);
+}
+
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+}
+.status-banner.warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+.status-inline {
+  margin-top: 0.25rem;
+}
+.status-inline.warn {
+  color: var(--warn-fg);
+}
+
+/* ---------- Utilities ---------- */
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+.text-muted-2 {
+  color: var(--muted-fg) !important;
+}
+.emoji {
+  font-size: 1.1rem;
+}
+
+.wrap {
+  white-space: normal !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+.subtle-divider {
+  border-top: 1px solid var(--bs-border-color);
+}
+
+/* ---------- Map UI (Leaflet) ---------- */
+.leaflet-container {
+  background: #fff;
+}
+.leaflet-container .edge-count,
+.leaflet-container .arrow-icon {
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Highlight small custom pin from ReturningPlacesMap */
+.ret-pin span {
+  outline: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+/* ---------- Breadcrumb-style path chips (EoL) ---------- */
+.path-breadcrumb {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+  font-size: 0.9rem;
+}
+.path-breadcrumb .path-seg {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.path-breadcrumb .path-arrow {
+  margin: 0 0.25rem;
+  color: #6c757d;
+  font-weight: 600;
+}
+
+/* ---------- Rare/Hazardous part lines ---------- */
+.partline {
+  border: 1px dashed #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  background: #fff;
+}
+.partline-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.partline-path {
+  margin-top: 0.25rem;
+}
+
+/* ---------- PartTree layout helpers ---------- */
+.partnode-card {
+  margin-bottom: 1rem;
+  overflow: visible;
+}
+.partnode-body {
+  overflow: visible;
+  position: relative;
+}
+
+.comp-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) 1fr;
+  gap: 1rem 1.25rem;
+  align-items: start;
+}
+@media (max-width: 768px) {
+  .comp-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.comp-chart {
+  width: 320px;
+  height: 320px;
+  min-width: 280px;
+  min-height: 280px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  z-index: 0; /* keep under the table area */
+}
+.comp-table {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.part-row {
+  border-top: 1px solid var(--border);
+}
+.part-row:first-child {
+  border-top: 0;
+}
+
+.part-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+.tree-toggle {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+.tree-toggle:hover {
+  opacity: 0.8;
+}
+.tree-toggle-placeholder {
+  width: 1rem;
+  display: inline-block;
+  text-align: center;
+  color: var(--muted-fg);
+}
+.part-name {
+  font-weight: 600;
+}
+.part-row-body {
+  padding: 0.5rem 0 1rem;
+}
+
+.service-agg {
+  display: grid;
+  gap: 0.5rem;
+}
+.agg-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+/* ---------- Lists for ServiceView ---------- */
+.fp-item,
+.dp-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.fp-icon,
+.dp-icon {
+  line-height: 1.2;
+}
+.item-path {
+  font-size: 0.875rem;
+  color: var(--muted-fg);
+}
+
+/* ---------- Code/Pre blocks (payload previews, etc.) ---------- */
+pre,
+code,
+kbd,
+samp {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+pre {
+  background: var(--neutral-100);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+  overflow: auto;
+}
+
+/* ---------- Modals & Toasts ---------- */
+.modal-content {
+  border-radius: 14px;
+  border-color: var(--bs-border-color);
+  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.18);
+}
+.modal-header {
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.02), rgba(2, 6, 23, 0));
+  border-bottom-color: var(--bs-border-color);
+}
+.toast {
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.18);
+}
+
+/* Rare-earth highlight */
+.rare-cell {
+  background-color: var(--warn-bg) !important;
+  border-left: 4px solid var(--bs-warning);
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
