@@ -16,11 +16,15 @@ EXAMPLE_JSONLD_DOCUMENT = {
             },
             "cleaning_cycles": {
                 "@value": 14,
-                "unitCode": "count",
+                "unitCode": "cycles",
             },
             "chalkCounter": {
                 "@value": 3,
                 "unitCode": "count",
+            },
+            "brewCounter": {
+                "@value": 182,
+                "unitCode": "times",
             },
             "hasTopPart": {
                 "@id": "urn:uuid:part-instance-root-001",
@@ -44,12 +48,12 @@ EXAMPLE_JSONLD_DOCUMENT = {
             "@id": "urn:uuid:part-static-001",
             "@type": "dpp:PartStatic",
             "weightGRM": {
-                "@value": 1850.0,
-                "unitCode": "g",
+                "@value": 1.85,
+                "unitCode": "kg",
             },
             "mtbfHRS": {
                 "@value": 5000,
-                "unitCode": "h",
+                "unitCode": "hours",
             },
         },
         {
@@ -64,8 +68,8 @@ EXAMPLE_JSONLD_DOCUMENT = {
                 "unitCode": "%",
             },
             "purityLevel": {
-                "@value": 92.0,
-                "unitCode": "%",
+                "@value": 0.92,
+                "unitCode": None,
             },
             "materialStaticLink": {
                 "@id": "urn:uuid:material-static-001",
@@ -81,7 +85,7 @@ EXAMPLE_JSONLD_DOCUMENT = {
             "@id": "urn:uuid:process-step-001",
             "@type": "dpp:ProcessStep",
             "beginDate": {
-                "@value": "2026-04-01T10:00:00Z",
+                "@value": "2026-04-01 10:00:00",
             },
             "endDate": {
                 "@value": "2026-04-01T11:00:00Z",
@@ -115,7 +119,7 @@ EXAMPLE_JSONLD_DOCUMENT = {
             },
             "emissions_kg_co2e": {
                 "@value": 12.5,
-                "unitCode": "kg_co2e",
+                "unitCode": "kgCO2e",
             },
         },
         {
@@ -125,11 +129,11 @@ EXAMPLE_JSONLD_DOCUMENT = {
                 "@value": "distance_traveled",
             },
             "quantity": {
-                "@value": 85.0,
-                "unitCode": "km",
+                "@value": 85000.0,
+                "unitCode": "m",
             },
             "unit": {
-                "@value": "km",
+                "@value": "meter",
             },
         },
         {
