@@ -50,6 +50,8 @@ IN_SCOPE_ENTITY_TYPES: frozenset[ScopedEntityType] = frozenset(
         ScopedEntityType.EMISSION_FACTOR,
         ScopedEntityType.GHG_EMISSION_RECORD,
         ScopedEntityType.DPP_INSTANCE,
+        ScopedEntityType.DPP_STATIC,
+        ScopedEntityType.PLACE,
     }
 )
 
@@ -278,11 +280,25 @@ RELATION_DEFINITIONS: tuple[ScopedRelationDefinition, ...] = (
         description="Maps DPPInstance to its top-level part instance.",
     ),
     ScopedRelationDefinition(
+        relation_type=RelationType.DPP_INSTANCE_TO_STATIC,
+        subject_type=ScopedEntityType.DPP_INSTANCE,
+        object_type=ScopedEntityType.DPP_STATIC,
+        required=False,
+        description="Maps DPPInstance to its DPPStatic definition.",
+    ),
+    ScopedRelationDefinition(
         relation_type=RelationType.PROCESS_STEP_TO_GHG_RECORD,
         subject_type=ScopedEntityType.PROCESS_STEP,
         object_type=ScopedEntityType.GHG_EMISSION_RECORD,
         required=False,
         description="Maps ProcessStep to its GHG emission records.",
+    ),
+    ScopedRelationDefinition(
+        relation_type=RelationType.PROCESS_STEP_TO_PLACE,
+        subject_type=ScopedEntityType.PROCESS_STEP,
+        object_type=ScopedEntityType.PLACE,
+        required=False,
+        description="Maps ProcessStep to the Place where the step occurred (processedAt).",
     ),
     ScopedRelationDefinition(
         relation_type=RelationType.GHG_RECORD_TO_ACTIVITY,

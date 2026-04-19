@@ -21,6 +21,8 @@ class ScopedEntityType(str, Enum):
     ACTIVITY_DATA = "ActivityData"
     EMISSION_FACTOR = "EmissionFactor"
     GHG_EMISSION_RECORD = "GHGEmissionRecord"
+    DPP_STATIC = "DPPStatic"
+    PLACE = "Place"
 
 
 class FieldRole(str, Enum):
@@ -35,7 +37,9 @@ class RelationType(str, Enum):
     PART_INSTANCE_TO_MATERIAL = "part_instance_to_material"
     MATERIAL_INSTANCE_TO_STATIC = "material_instance_to_static"
     DPP_INSTANCE_TO_PART = "dpp_instance_to_part"
+    DPP_INSTANCE_TO_STATIC = "dpp_instance_to_static"
     PROCESS_STEP_TO_GHG_RECORD = "process_step_to_ghg_record"
+    PROCESS_STEP_TO_PLACE = "process_step_to_place"
     GHG_RECORD_TO_ACTIVITY = "ghg_record_to_activity"
     GHG_RECORD_TO_EMISSION_FACTOR = "ghg_record_to_emission_factor"
 

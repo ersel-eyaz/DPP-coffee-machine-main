@@ -234,10 +234,22 @@ RELATION_RULES: tuple[RelationMappingRule, ...] = (
         aliases=("partinstancelink", "hastoppart", "hastoppartinstance", "toppart"),
     ),
     RelationMappingRule(
+        relation_type=RelationType.DPP_INSTANCE_TO_STATIC,
+        subject_type=ScopedEntityType.DPP_INSTANCE,
+        object_type=ScopedEntityType.DPP_STATIC,
+        aliases=("dppstaticlink", "hasdppstatic", "dppstatic"),
+    ),
+    RelationMappingRule(
         relation_type=RelationType.PROCESS_STEP_TO_GHG_RECORD,
         subject_type=ScopedEntityType.PROCESS_STEP,
         object_type=ScopedEntityType.GHG_EMISSION_RECORD,
         aliases=("ghgemissionrecords", "logs", "records", "emissionsrecords"),
+    ),
+    RelationMappingRule(
+        relation_type=RelationType.PROCESS_STEP_TO_PLACE,
+        subject_type=ScopedEntityType.PROCESS_STEP,
+        object_type=ScopedEntityType.PLACE,
+        aliases=("processedat",),
     ),
     RelationMappingRule(
         relation_type=RelationType.GHG_RECORD_TO_ACTIVITY,

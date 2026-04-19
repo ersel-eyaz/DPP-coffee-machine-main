@@ -26,9 +26,17 @@ EXAMPLE_JSONLD_DOCUMENT = {
                 "@value": 182,
                 "unitCode": "times",
             },
+            "dppStaticLink": {
+                "@id": "urn:uuid:dpp-static-001",
+            },
             "hasTopPart": {
                 "@id": "urn:uuid:part-instance-root-001",
             },
+        },
+        {
+            "@id": "urn:uuid:dpp-static-001",
+            "@type": "dpp:DPPStatic",
+            "name": "Coffee Machine Model X"
         },
         {
             "@id": "urn:uuid:part-instance-root-001",
@@ -82,6 +90,11 @@ EXAMPLE_JSONLD_DOCUMENT = {
             "rareEarth": True,
         },
         {
+            "@id": "urn:uuid:place-001",
+            "@type": "schema:Place",
+            "name": "Fraunhofer IPA"
+        },
+        {
             "@id": "urn:uuid:process-step-001",
             "@type": "dpp:ProcessStep",
             "beginDate": {
@@ -89,6 +102,9 @@ EXAMPLE_JSONLD_DOCUMENT = {
             },
             "endDate": {
                 "@value": "2026-04-01T11:00:00Z",
+            },
+            "processedAt": {
+                "@id": "urn:uuid:place-001",
             },
             "ghgEmissionRecords": [
                 {
