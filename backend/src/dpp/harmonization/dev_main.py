@@ -6,6 +6,7 @@ from typing import Iterable
 
 from dpp.harmonization.sample_inputs import EXAMPLE_JSONLD_DOCUMENT
 from dpp.harmonization.services import harmonize_jsonld_document
+from dpp.harmonization.projector import HeadlessProjector
 
 
 PRIMARY_FIELDS = {
@@ -147,6 +148,45 @@ def _print_verbose_issues(result) -> None:
             print(f"    details={json.dumps(issue.details, ensure_ascii=False, sort_keys=True)}")
 
 
+def _print_projection_summary(projector: HeadlessProjector, models: list[object]) -> None:
+    report = projector.report
+
+    print("\nProjection summary")
+    print(f" - projected models: {len(models)}")
+    print(f" - projected entities: {report.projected_count}")
+    print(f" - skipped entities: {report.skipped_count}")
+    print(f" - technical fill-ins: {report.technical_fill_count}")
+
+    warning_or_error_issues = [
+        issue for issue in report.issues if issue.severity in {"warning", "error"}
+    ]
+    print(f" - projection warnings/errors: {len(warning_or_error_issues)}")
+
+    print("\nProjected model types")
+    if not models:
+        print("- none")
+        return
+
+    for model in models:
+        print(f"- {model.__class__.__name__} (ID: {getattr(model, 'id', 'N/A')})")
+
+
+def _print_projection_issues(projector: HeadlessProjector) -> None:
+    print("\nProjection issues")
+    if not projector.report.issues:
+        print("- none")
+        return
+
+    for issue in projector.report.issues:
+        print(f"- {issue.severity}: {issue.message}")
+        if issue.entity_id is not None:
+            print(f"    entity_id={issue.entity_id}")
+        if issue.entity_type is not None:
+            print(f"    entity_type={issue.entity_type}")
+        if issue.details:
+            print(f"    details={json.dumps(issue.details, ensure_ascii=False, sort_keys=True, default=str)}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the harmonization pipeline on the built-in sample input."
@@ -155,6 +195,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="Print a full entity/field/issue dump in addition to the compact summary.",
+    )
+    parser.add_argument(
+        "--no-projection",
+        action="store_true",
+        help="Run only the harmonization pipeline and skip projection.",
     )
     return parser
 
@@ -171,6 +216,18 @@ def main() -> None:
     if args.verbose:
         _print_verbose_entity_dump(result)
         _print_verbose_issues(result)
+
+    if args.no_projection:
+        return
+
+    print("\n--- Starting Projection ---")
+    projector = HeadlessProjector(result)
+    models = projector.run()
+
+    _print_projection_summary(projector, models)
+
+    if args.verbose:
+        _print_projection_issues(projector)
 
 
 if __name__ == "__main__":
