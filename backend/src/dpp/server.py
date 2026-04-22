@@ -20,6 +20,8 @@ from .routers.organisation import router as organization_router
 from .routers.part import router as part_router
 from .routers.place import router as place_router
 
+from .data_quality.router import router as data_quality_router
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -74,6 +76,7 @@ app.include_router(material_router, prefix="/material", tags=["material"])
 app.include_router(part_router, prefix="/part", tags=["part"])
 app.include_router(dpp_router, prefix="/dpp", tags=["dpp"])
 app.include_router(jsonld_router, prefix="/jsonld", tags=["jsonld"])
+app.include_router(data_quality_router, prefix="/data-quality", tags=["data-quality"])
 
 
 @app.get("/")
