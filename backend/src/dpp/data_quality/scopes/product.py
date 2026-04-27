@@ -5,13 +5,12 @@ This scope focuses on product usage and physical plausibility. It covers
 selected numeric fields from DPPStatic, PartStatic, MaterialInstance, and
 DPPInstance.
 
-ProcessStep and service-step subclasses are intentionally excluded from the
-first iteration.
+ProcessStep and service-step subclasses are intentionally excluded.
 """
 
 from __future__ import annotations
 
-from dpp.data_quality.scopes.schemas import CanonicalField, ScopeDefinition
+from dpp.data_quality.scopes.schemas import CanonicalField, CanonicalRelation, ScopeDefinition
 
 
 PRODUCT_SCOPE = ScopeDefinition(
@@ -161,6 +160,50 @@ PRODUCT_SCOPE = ScopeDefinition(
             field_name="hasFailstate",
             role="analysis_context",
             description="Optional condition context; field name follows prototype code.",
+        ),
+    ),
+    relations=(
+        CanonicalRelation(
+            source_entity_type="DPPInstance",
+            relation_name="dppStaticLink",
+            target_entity_type="DPPStatic",
+            required=True,
+            description="Links a product instance to its static DPP definition.",
+        ),
+        CanonicalRelation(
+            source_entity_type="DPPInstance",
+            relation_name="partInstanceLink",
+            target_entity_type="PartInstance",
+            required=False,
+            description="Links a product instance to the top-level part instance.",
+        ),
+        CanonicalRelation(
+            source_entity_type="PartInstance",
+            relation_name="partStaticLink",
+            target_entity_type="PartStatic",
+            required=True,
+            description="Links a part instance to its static part definition.",
+        ),
+        CanonicalRelation(
+            source_entity_type="PartInstance",
+            relation_name="compositeParts",
+            target_entity_type="PartInstance",
+            is_collection=True,
+            description="Preserves recursive child-part structure.",
+        ),
+        CanonicalRelation(
+            source_entity_type="PartInstance",
+            relation_name="compositeMaterials",
+            target_entity_type="MaterialInstance",
+            is_collection=True,
+            description="Preserves part-to-material composition structure.",
+        ),
+        CanonicalRelation(
+            source_entity_type="MaterialInstance",
+            relation_name="materialStaticLink",
+            target_entity_type="MaterialStatic",
+            required=True,
+            description="Links a material instance to its static material definition.",
         ),
     ),
 )

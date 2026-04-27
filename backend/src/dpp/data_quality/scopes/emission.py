@@ -5,11 +5,14 @@ This scope focuses on activity data, emission factors, and calculated GHG
 emission records. It supports label harmonization for numeric fields, unit
 harmonization for activity/factor units, controlled vocabulary normalization,
 and cross-entity consistency checks.
+
+GHG scope and Scope 3 category are treated as controlled-vocabulary fields,
+not as structural relations, because this follows the original prototype model.
 """
 
 from __future__ import annotations
 
-from dpp.data_quality.scopes.schemas import CanonicalField, ScopeDefinition
+from dpp.data_quality.scopes.schemas import CanonicalField, CanonicalRelation, ScopeDefinition
 
 
 EMISSION_SCOPE = ScopeDefinition(
@@ -96,6 +99,22 @@ EMISSION_SCOPE = ScopeDefinition(
             field_name="provenance",
             role="analysis_context",
             description="Optional source metadata; not an active harmonization target.",
+        ),
+    ),
+    relations=(
+        CanonicalRelation(
+            source_entity_type="GHGEmissionRecord",
+            relation_name="activity",
+            target_entity_type="ActivityData",
+            required=True,
+            description="Preserves the link to the activity input used in the emission calculation.",
+        ),
+        CanonicalRelation(
+            source_entity_type="GHGEmissionRecord",
+            relation_name="emission_factor",
+            target_entity_type="EmissionFactor",
+            required=True,
+            description="Preserves the link to the emission factor used in the emission calculation.",
         ),
     ),
 )
