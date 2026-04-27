@@ -1,0 +1,33 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "activity-001",
+      "@type": "dpp:ActivityData",
+      "dpp:measuredAmount": 85000,
+      "dpp:activityUnit": "meters"
+    },
+    {
+      "@id": "factor-001",
+      "@type": "dpp:EmissionFactor",
+      "dpp:co2Factor": 0.147,
+      "dpp:factorUnit": "kg CO2 equivalent per kilometer"
+    },
+    {
+      "@id": "record-001",
+      "@type": "dpp:GHGEmissionRecord",
+      "dpp:totalCarbon": {
+        "value": 1250,
+        "unit": "kgCO2e"
+      },
+      "dpp:activity": {
+        "@id": "activity-001"
+      },
+      "dpp:emission_factor": {
+        "@id": "factor-001"
+      }
+    }
+  ]
+}

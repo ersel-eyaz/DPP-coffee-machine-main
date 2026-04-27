@@ -3,7 +3,7 @@ Rule-based field-label mapper for the harmonization layer.
 
 The mapper resolves dirty input labels to canonical field paths within a selected
 data-quality scope. It does not normalize values or units; that is handled by
-normalizers.py.
+normalizers.py and services.py.
 """
 
 from __future__ import annotations
@@ -190,6 +190,27 @@ _EMISSION_LABEL_MAPPINGS: dict[str, str] = {
 }
 
 
+# Ambiguous labels such as "unit" are resolved only with entity context.
+_ENTITY_CONTEXT_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
+    ("emission", "ActivityData"): {
+        "unit": "ActivityData.unit",
+        "activityunit": "ActivityData.unit",
+        "activitydataunit": "ActivityData.unit",
+        "quantityunit": "ActivityData.unit",
+        "measuredamountunit": "ActivityData.unit",
+        "hasunit": "ActivityData.unit",
+    },
+    ("emission", "EmissionFactor"): {
+        "unit": "EmissionFactor.unit",
+        "factorunit": "EmissionFactor.unit",
+        "emissionfactorunit": "EmissionFactor.unit",
+        "co2factorunit": "EmissionFactor.unit",
+        "carbonfactorunit": "EmissionFactor.unit",
+        "hasunit": "EmissionFactor.unit",
+    },
+}
+
+
 _SCOPE_MAPPINGS: dict[str, dict[str, str]] = {
     "product": _PRODUCT_LABEL_MAPPINGS,
     "emission": _EMISSION_LABEL_MAPPINGS,
@@ -201,11 +222,18 @@ def _canonical_fields_by_path(scope: ScopeDefinition) -> dict[str, CanonicalFiel
     return {field.path: field for field in scope.fields}
 
 
-def map_field_label(label: str, scope_name: str) -> FieldMappingCandidate | None:
+def map_field_label(label: str, scope_name: str, entity_type: str | None = None) -> FieldMappingCandidate | None:
     """
     Map a dirty field label to a canonical field path.
 
-    Returns None if the label is unknown for the selected scope.
+    Args:
+        label: Original input label.
+        scope_name: Selected data-quality scope.
+        entity_type: Optional parsed entity type. Used to resolve context-dependent
+            labels such as "unit" in the emission scope.
+
+    Returns:
+        None if the label is unknown for the selected scope.
     """
 
     scope = SUPPORTED_SCOPES.get(scope_name)
@@ -213,8 +241,15 @@ def map_field_label(label: str, scope_name: str) -> FieldMappingCandidate | None
         raise MappingError(f"Unsupported scope: {scope_name!r}")
 
     normalized_label = _normalize_label(label)
-    scope_mapping = _SCOPE_MAPPINGS.get(scope_name, {})
-    canonical_path = scope_mapping.get(normalized_label)
+    canonical_path = None
+
+    if entity_type is not None:
+        context_mapping = _ENTITY_CONTEXT_MAPPINGS.get((scope_name, entity_type), {})
+        canonical_path = context_mapping.get(normalized_label)
+
+    if canonical_path is None:
+        scope_mapping = _SCOPE_MAPPINGS.get(scope_name, {})
+        canonical_path = scope_mapping.get(normalized_label)
 
     if canonical_path is None:
         return None
