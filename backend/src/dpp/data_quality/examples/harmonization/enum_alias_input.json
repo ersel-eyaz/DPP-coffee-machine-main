@@ -1,0 +1,51 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "activity-enum-001",
+      "@type": "dpp:ActivityData",
+      "dpp:measuredAmount": 125,
+      "dpp:activityUnit": "kWh",
+      "dpp:activity_type": "electricity consumption"
+    },
+    {
+      "@id": "factor-enum-001",
+      "@type": "dpp:EmissionFactor",
+      "dpp:co2Factor": 0.42,
+      "dpp:factorUnit": "kgCO2e/kWh"
+    },
+    {
+      "@id": "record-enum-001",
+      "@type": "dpp:GHGEmissionRecord",
+      "dpp:totalCarbon": {
+        "value": 52.5,
+        "unit": "kgCO2e"
+      },
+      "dpp:scope": "scope 3",
+      "dpp:scope3_category": "purchased goods and services",
+      "dpp:activity": {
+        "@id": "activity-enum-001"
+      },
+      "dpp:emission_factor": {
+        "@id": "factor-enum-001"
+      }
+    },
+    {
+      "@id": "record-enum-002",
+      "@type": "dpp:GHGEmissionRecord",
+      "dpp:totalCarbon": {
+        "value": 10.0,
+        "unit": "kgCO2e"
+      },
+      "dpp:scope": "SCOPE_2",
+      "dpp:activity": {
+        "@id": "activity-enum-001"
+      },
+      "dpp:emission_factor": {
+        "@id": "factor-enum-001"
+      }
+    }
+  ]
+}

@@ -2,8 +2,12 @@
 Rule-based field-label mapper for the harmonization layer.
 
 The mapper resolves dirty input labels to canonical field paths within a selected
-data-quality scope. It does not normalize values or units; that is handled by
+entity context. It does not normalize values or units; that is handled by
 normalizers.py and services.py.
+
+Entity types are assumed to be reliable at this stage. Field-label
+harmonization is therefore restricted to the declared entity type whenever an
+entity type is available.
 """
 
 from __future__ import annotations
@@ -72,132 +76,87 @@ def _normalize_label(label: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Product Scope mappings
+# Entity-aware field-label aliases
 # ---------------------------------------------------------------------------
 
-_PRODUCT_LABEL_MAPPINGS: dict[str, str] = {
-    # DPPStatic.weightGRM
-    "productweight": "DPPStatic.weightGRM",
-    "productmass": "DPPStatic.weightGRM",
-    "totalproductweight": "DPPStatic.weightGRM",
-    "totalweight": "DPPStatic.weightGRM",
-    "deviceweight": "DPPStatic.weightGRM",
-    "applianceweight": "DPPStatic.weightGRM",
-
-    # DPPStatic.heightCM
-    "productheight": "DPPStatic.heightCM",
-    "deviceheight": "DPPStatic.heightCM",
-    "applianceheight": "DPPStatic.heightCM",
-
-    # DPPStatic.widthCM
-    "productwidth": "DPPStatic.widthCM",
-    "devicewidth": "DPPStatic.widthCM",
-    "appliancewidth": "DPPStatic.widthCM",
-
-    # DPPStatic.depthCM
-    "productdepth": "DPPStatic.depthCM",
-    "devicedepth": "DPPStatic.depthCM",
-    "appliancedepth": "DPPStatic.depthCM",
-
-    # PartStatic.weightGRM
-    "partweight": "PartStatic.weightGRM",
-    "partmass": "PartStatic.weightGRM",
-    "componentweight": "PartStatic.weightGRM",
-    "componentmass": "PartStatic.weightGRM",
-
-    # PartStatic.heightCM
-    "partheight": "PartStatic.heightCM",
-    "componentheight": "PartStatic.heightCM",
-
-    # PartStatic.widthCM
-    "partwidth": "PartStatic.widthCM",
-    "componentwidth": "PartStatic.widthCM",
-
-    # PartStatic.depthCM
-    "partdepth": "PartStatic.depthCM",
-    "componentdepth": "PartStatic.depthCM",
-
-    # MaterialInstance.weightGRM
-    "materialweight": "MaterialInstance.weightGRM",
-    "materialmass": "MaterialInstance.weightGRM",
-    "rawmaterialweight": "MaterialInstance.weightGRM",
-    "rawmaterialmass": "MaterialInstance.weightGRM",
-
-    # MaterialInstance.percentRecycled
-    "recycledcontent": "MaterialInstance.percentRecycled",
-    "recycledshare": "MaterialInstance.percentRecycled",
-    "percentrecycled": "MaterialInstance.percentRecycled",
-    "recyclingpercentage": "MaterialInstance.percentRecycled",
-    "recycledpercentage": "MaterialInstance.percentRecycled",
-
-    # MaterialInstance.purityLevel
-    "purity": "MaterialInstance.purityLevel",
-    "materialpurity": "MaterialInstance.purityLevel",
-    "puritylevel": "MaterialInstance.purityLevel",
-
-    # DPPInstance.operatingHRS
-    "runtime": "DPPInstance.operatingHRS",
-    "operatinghours": "DPPInstance.operatingHRS",
-    "usagehours": "DPPInstance.operatingHRS",
-    "operatinghrs": "DPPInstance.operatingHRS",
-    "operationhours": "DPPInstance.operatingHRS",
-
-    # DPPInstance.brewingCount
-    "brewcycles": "DPPInstance.brewingCount",
-    "brewingcycles": "DPPInstance.brewingCount",
-    "cupsmade": "DPPInstance.brewingCount",
-    "brewingcount": "DPPInstance.brewingCount",
-    "coffeeproduced": "DPPInstance.brewingCount",
-
-    # DPPInstance.cleaningCount
-    "cleaningcycles": "DPPInstance.cleaningCount",
-    "cleaningcount": "DPPInstance.cleaningCount",
-    "cleanings": "DPPInstance.cleaningCount",
-
-    # DPPInstance.chalkCount
-    "descalingcycles": "DPPInstance.chalkCount",
-    "descalingcount": "DPPInstance.chalkCount",
-    "chalkcount": "DPPInstance.chalkCount",
-    "decalcificationcycles": "DPPInstance.chalkCount",
-
-    # DPPInstance.coffeeGrindingCount
-    "grindercycles": "DPPInstance.coffeeGrindingCount",
-    "grindingcycles": "DPPInstance.coffeeGrindingCount",
-    "grindingcount": "DPPInstance.coffeeGrindingCount",
-    "coffeegrindingcount": "DPPInstance.coffeeGrindingCount",
-}
-
-
-# ---------------------------------------------------------------------------
-# Emission Scope mappings
-# ---------------------------------------------------------------------------
-
-_EMISSION_LABEL_MAPPINGS: dict[str, str] = {
-    # ActivityData.quantity
-    "measuredamount": "ActivityData.quantity",
-    "activityquantity": "ActivityData.quantity",
-    "quantity": "ActivityData.quantity",
-    "amount": "ActivityData.quantity",
-    "consumptionamount": "ActivityData.quantity",
-
-    # EmissionFactor.value
-    "co2factor": "EmissionFactor.value",
-    "carbonfactor": "EmissionFactor.value",
-    "emissionfactor": "EmissionFactor.value",
-    "factorvalue": "EmissionFactor.value",
-
-    # GHGEmissionRecord.emissions_kg_co2e
-    "totalcarbon": "GHGEmissionRecord.emissions_kg_co2e",
-    "totalemissions": "GHGEmissionRecord.emissions_kg_co2e",
-    "emissions": "GHGEmissionRecord.emissions_kg_co2e",
-    "emissionskgco2e": "GHGEmissionRecord.emissions_kg_co2e",
-    "carbonfootprint": "GHGEmissionRecord.emissions_kg_co2e",
-}
-
-
-# Ambiguous labels such as "unit" are resolved only with entity context.
-_ENTITY_CONTEXT_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
+_ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
+    # Product scope: product-level static fields.
+    ("product", "DPPStatic"): {
+        "productweight": "DPPStatic.weightGRM",
+        "productmass": "DPPStatic.weightGRM",
+        "totalproductweight": "DPPStatic.weightGRM",
+        "totalweight": "DPPStatic.weightGRM",
+        "deviceweight": "DPPStatic.weightGRM",
+        "applianceweight": "DPPStatic.weightGRM",
+        "productheight": "DPPStatic.heightCM",
+        "deviceheight": "DPPStatic.heightCM",
+        "applianceheight": "DPPStatic.heightCM",
+        "productwidth": "DPPStatic.widthCM",
+        "devicewidth": "DPPStatic.widthCM",
+        "appliancewidth": "DPPStatic.widthCM",
+        "productdepth": "DPPStatic.depthCM",
+        "devicedepth": "DPPStatic.depthCM",
+        "appliancedepth": "DPPStatic.depthCM",
+    },
+    # Product scope: part-level static fields.
+    ("product", "PartStatic"): {
+        "partweight": "PartStatic.weightGRM",
+        "partmass": "PartStatic.weightGRM",
+        "componentweight": "PartStatic.weightGRM",
+        "componentmass": "PartStatic.weightGRM",
+        "partheight": "PartStatic.heightCM",
+        "componentheight": "PartStatic.heightCM",
+        "partwidth": "PartStatic.widthCM",
+        "componentwidth": "PartStatic.widthCM",
+        "partdepth": "PartStatic.depthCM",
+        "componentdepth": "PartStatic.depthCM",
+    },
+    # Product scope: material instance fields.
+    ("product", "MaterialInstance"): {
+        "materialweight": "MaterialInstance.weightGRM",
+        "materialmass": "MaterialInstance.weightGRM",
+        "rawmaterialweight": "MaterialInstance.weightGRM",
+        "rawmaterialmass": "MaterialInstance.weightGRM",
+        "recycledcontent": "MaterialInstance.percentRecycled",
+        "recycledshare": "MaterialInstance.percentRecycled",
+        "percentrecycled": "MaterialInstance.percentRecycled",
+        "recyclingpercentage": "MaterialInstance.percentRecycled",
+        "recycledpercentage": "MaterialInstance.percentRecycled",
+        "purity": "MaterialInstance.purityLevel",
+        "materialpurity": "MaterialInstance.purityLevel",
+        "puritylevel": "MaterialInstance.purityLevel",
+    },
+    # Product scope: product-instance usage counters.
+    ("product", "DPPInstance"): {
+        "runtime": "DPPInstance.operatingHRS",
+        "operatinghours": "DPPInstance.operatingHRS",
+        "usagehours": "DPPInstance.operatingHRS",
+        "operatinghrs": "DPPInstance.operatingHRS",
+        "operationhours": "DPPInstance.operatingHRS",
+        "brewcycles": "DPPInstance.brewingCount",
+        "brewingcycles": "DPPInstance.brewingCount",
+        "cupsmade": "DPPInstance.brewingCount",
+        "brewingcount": "DPPInstance.brewingCount",
+        "coffeeproduced": "DPPInstance.brewingCount",
+        "cleaningcycles": "DPPInstance.cleaningCount",
+        "cleaningcount": "DPPInstance.cleaningCount",
+        "cleanings": "DPPInstance.cleaningCount",
+        "descalingcycles": "DPPInstance.chalkCount",
+        "descalingcount": "DPPInstance.chalkCount",
+        "chalkcount": "DPPInstance.chalkCount",
+        "decalcificationcycles": "DPPInstance.chalkCount",
+        "grindercycles": "DPPInstance.coffeeGrindingCount",
+        "grindingcycles": "DPPInstance.coffeeGrindingCount",
+        "grindingcount": "DPPInstance.coffeeGrindingCount",
+        "coffeegrindingcount": "DPPInstance.coffeeGrindingCount",
+    },
+    # Emission scope: activity data fields.
     ("emission", "ActivityData"): {
+        "measuredamount": "ActivityData.quantity",
+        "activityquantity": "ActivityData.quantity",
+        "quantity": "ActivityData.quantity",
+        "amount": "ActivityData.quantity",
+        "consumptionamount": "ActivityData.quantity",
         "unit": "ActivityData.unit",
         "activityunit": "ActivityData.unit",
         "activitydataunit": "ActivityData.unit",
@@ -205,7 +164,12 @@ _ENTITY_CONTEXT_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
         "measuredamountunit": "ActivityData.unit",
         "hasunit": "ActivityData.unit",
     },
+    # Emission scope: emission factor fields.
     ("emission", "EmissionFactor"): {
+        "co2factor": "EmissionFactor.value",
+        "carbonfactor": "EmissionFactor.value",
+        "emissionfactor": "EmissionFactor.value",
+        "factorvalue": "EmissionFactor.value",
         "unit": "EmissionFactor.unit",
         "factorunit": "EmissionFactor.unit",
         "emissionfactorunit": "EmissionFactor.unit",
@@ -213,12 +177,14 @@ _ENTITY_CONTEXT_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
         "carbonfactorunit": "EmissionFactor.unit",
         "hasunit": "EmissionFactor.unit",
     },
-}
-
-
-_SCOPE_MAPPINGS: dict[str, dict[str, str]] = {
-    "product": _PRODUCT_LABEL_MAPPINGS,
-    "emission": _EMISSION_LABEL_MAPPINGS,
+    # Emission scope: GHG emission record fields.
+    ("emission", "GHGEmissionRecord"): {
+        "totalcarbon": "GHGEmissionRecord.emissions_kg_co2e",
+        "totalemissions": "GHGEmissionRecord.emissions_kg_co2e",
+        "emissions": "GHGEmissionRecord.emissions_kg_co2e",
+        "emissionskgco2e": "GHGEmissionRecord.emissions_kg_co2e",
+        "carbonfootprint": "GHGEmissionRecord.emissions_kg_co2e",
+    },
 }
 
 
@@ -253,30 +219,79 @@ def _similarity(left: str, right: str) -> float:
     return SequenceMatcher(None, left, right).ratio()
 
 
-def _candidate_alias_mappings(scope_name: str, entity_type: str | None) -> dict[str, str]:
-    """Return aliases that are safe to compare for the current entity context."""
-
-    raw_mappings: dict[str, str] = {}
-    raw_mappings.update(_SCOPE_MAPPINGS.get(scope_name, {}))
+def _fields_for_entity(
+    canonical_fields: dict[str, CanonicalField],
+    entity_type: str | None,
+) -> list[tuple[str, CanonicalField]]:
+    """Return canonical fields that are safe to consider for the current entity context."""
 
     if entity_type is not None:
-        raw_mappings.update(_ENTITY_CONTEXT_MAPPINGS.get((scope_name, entity_type), {}))
+        return [
+            (path, field)
+            for path, field in canonical_fields.items()
+            if field.entity_type == entity_type
+        ]
 
-    return raw_mappings
+    # Without reliable entity context, do not broaden fuzzy search. Exact canonical
+    # matches below may still be accepted only if they are unique across the scope.
+    return list(canonical_fields.items())
+
+
+def _find_exact_canonical_field_match(
+    normalized_label: str,
+    canonical_fields: dict[str, CanonicalField],
+    entity_type: str | None,
+) -> str | None:
+    """
+    Resolve labels that already match canonical field names or full paths.
+
+    The resolver is ambiguity-safe:
+    - If entity_type is known, only fields of that entity are considered.
+    - If entity_type is unknown, a match is accepted only when unique in the scope.
+    """
+
+    matches: set[str] = set()
+
+    for canonical_path, canonical_field in _fields_for_entity(canonical_fields, entity_type):
+        variants = {
+            _normalize_label(canonical_field.field_name),
+            _normalize_label(canonical_field.path),
+        }
+
+        if normalized_label in variants:
+            matches.add(canonical_path)
+
+    if len(matches) == 1:
+        return next(iter(matches))
+
+    return None
+
+
+def _candidate_alias_mappings(scope_name: str, entity_type: str | None) -> dict[str, str]:
+    """Return entity-specific aliases for the current trusted entity context."""
+
+    if entity_type is None:
+        return {}
+
+    return dict(_ENTITY_LABEL_MAPPINGS.get((scope_name, entity_type), {}))
 
 
 def map_field_label(label: str, scope_name: str, entity_type: str | None = None) -> FieldMappingCandidate | None:
     """
     Map a dirty field label to a canonical field path using exact aliases only.
 
+    Entity types are assumed to be reliable. If entity_type is available, exact
+    alias and canonical-name matching are restricted to that entity. This avoids
+    broad scope-level mappings for generic labels such as 'unit', 'value', or
+    'description'.
+
     Args:
         label: Original input label.
         scope_name: Selected data-quality scope.
-        entity_type: Optional parsed entity type. Used to resolve context-dependent
-            labels such as "unit" in the emission scope.
+        entity_type: Optional parsed entity type.
 
     Returns:
-        None if the label is unknown for the selected scope.
+        None if the label is unknown for the selected entity context.
     """
 
     scope = SUPPORTED_SCOPES.get(scope_name)
@@ -284,20 +299,21 @@ def map_field_label(label: str, scope_name: str, entity_type: str | None = None)
         raise MappingError(f"Unsupported scope: {scope_name!r}")
 
     normalized_label = _normalize_label(label)
-    canonical_path = None
+    canonical_fields = _canonical_fields_by_path(scope)
 
-    if entity_type is not None:
-        context_mapping = _ENTITY_CONTEXT_MAPPINGS.get((scope_name, entity_type), {})
-        canonical_path = context_mapping.get(normalized_label)
+    entity_mapping = _candidate_alias_mappings(scope_name, entity_type)
+    canonical_path = entity_mapping.get(normalized_label)
 
     if canonical_path is None:
-        scope_mapping = _SCOPE_MAPPINGS.get(scope_name, {})
-        canonical_path = scope_mapping.get(normalized_label)
+        canonical_path = _find_exact_canonical_field_match(
+            normalized_label=normalized_label,
+            canonical_fields=canonical_fields,
+            entity_type=entity_type,
+        )
 
     if canonical_path is None:
         return None
 
-    canonical_fields = _canonical_fields_by_path(scope)
     return _build_candidate(
         label=label,
         canonical_path=canonical_path,
@@ -317,9 +333,9 @@ def find_field_label_candidates(
 
     This function is intended to be called only after map_field_label() returned
     None. It keeps the search entity-aware: when an entity type is known, only
-    canonical fields belonging to that entity are considered. This avoids broad
-    cross-entity matches such as mapping a generic "weight" label to a material,
-    part, or product field without enough context.
+    canonical fields and aliases belonging to that entity are considered. This
+    avoids broad cross-entity matches such as mapping a generic "weight" label to
+    a material, part, or product field without enough context.
     """
 
     scope = SUPPORTED_SCOPES.get(scope_name)
@@ -342,19 +358,20 @@ def find_field_label_candidates(
         if score >= min_confidence:
             candidate_scores[canonical_path] = max(candidate_scores.get(canonical_path, 0.0), score)
 
-    for canonical_path, canonical_field in canonical_fields.items():
-        if entity_type is not None and canonical_field.entity_type != entity_type:
-            continue
+    # Fuzzy comparison against canonical field names is restricted to known entity
+    # context. Without entity context, exact canonical matching above may be used,
+    # but fuzzy matching would be too broad for generic names.
+    if entity_type is not None:
+        for canonical_path, canonical_field in _fields_for_entity(canonical_fields, entity_type):
+            canonical_label_variants = (
+                _normalize_label(canonical_field.field_name),
+                _normalize_label(canonical_field.path),
+            )
 
-        canonical_label_variants = (
-            _normalize_label(canonical_field.field_name),
-            _normalize_label(canonical_field.path),
-        )
-
-        for canonical_label in canonical_label_variants:
-            score = _similarity(normalized_label, canonical_label)
-            if score >= min_confidence:
-                candidate_scores[canonical_path] = max(candidate_scores.get(canonical_path, 0.0), score)
+            for canonical_label in canonical_label_variants:
+                score = _similarity(normalized_label, canonical_label)
+                if score >= min_confidence:
+                    candidate_scores[canonical_path] = max(candidate_scores.get(canonical_path, 0.0), score)
 
     candidates = [
         _build_candidate(
@@ -371,12 +388,20 @@ def find_field_label_candidates(
 
 def get_label_mappings(scope_name: str) -> dict[str, str]:
     """
-    Return the raw mapping table for a scope.
+    Return the raw entity-aware mapping table for a scope.
 
-    The returned dict is a copy so callers cannot mutate module-level mappings.
+    The returned dict is flattened with keys of the form 'EntityType:alias' so
+    callers can inspect mappings without losing entity context.
     """
 
     if scope_name not in SUPPORTED_SCOPES:
         raise MappingError(f"Unsupported scope: {scope_name!r}")
 
-    return dict(_SCOPE_MAPPINGS.get(scope_name, {}))
+    flattened: dict[str, str] = {}
+    for (mapping_scope, entity_type), aliases in _ENTITY_LABEL_MAPPINGS.items():
+        if mapping_scope != scope_name:
+            continue
+        for alias, canonical_path in aliases.items():
+            flattened[f"{entity_type}:{alias}"] = canonical_path
+
+    return flattened

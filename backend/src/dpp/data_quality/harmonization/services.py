@@ -17,9 +17,11 @@ from dpp.data_quality.harmonization.mapper import (
 from dpp.data_quality.harmonization.normalizers import (
     NormalizationError,
     find_unit_label_candidates,
+    normalize_enum_value,
     normalize_unit_label,
     normalize_value_to_unit,
     normalize_without_unit,
+    resolve_enum_value,
     resolve_unit_label,
 )
 from dpp.data_quality.harmonization.parser import ParsedEntity, parse_jsonld_document
@@ -193,6 +195,12 @@ def _get_unit_candidate_for_trace(
     return unit_label, resolve_unit_label(unit_label)
 
 
+def _normalize_controlled_vocabulary_field(canonical_path: str, value: Any) -> str:
+    """Normalize a controlled-vocabulary field by direct canonical match or exact alias."""
+    scalar_value, _ = _extract_value_and_unit(value)
+    return normalize_enum_value(canonical_path, scalar_value)
+
+
 def _normalize_mapped_value(
     value: Any,
     source_unit: str | None,
@@ -208,6 +216,9 @@ def _normalize_mapped_value(
     if canonical_field.role == "unit_harmonization":
         normalized_unit = _normalize_unit_field(value)
         return normalized_unit, None
+
+    if canonical_field.role == "controlled_vocabulary":
+        return _normalize_controlled_vocabulary_field(canonical_field.path, value), None
 
     if canonical_field.path == "ActivityData.quantity":
         target_unit = _target_unit_for_activity_quantity(source_unit)
@@ -423,7 +434,31 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                     source_unit=original_unit,
                     canonical_field=canonical_field,
                 )
-                status = "normalized" if normalized_unit is not None or canonical_field.role == "unit_harmonization" else "mapped"
+                status = (
+                    "normalized"
+                    if normalized_unit is not None
+                    or canonical_field.role in {"unit_harmonization", "controlled_vocabulary"}
+                    else "mapped"
+                )
+
+                enum_candidate = None
+                if canonical_field.role == "controlled_vocabulary":
+                    scalar_value, _ = _extract_value_and_unit(original_value)
+                    enum_candidate = resolve_enum_value(canonical_field.path, scalar_value)
+
+                if enum_candidate is not None and enum_candidate.match_type == "alias":
+                    issues.append(
+                        HarmonizationIssue(
+                            severity="info",
+                            message=(
+                                f"Controlled-vocabulary value {enum_candidate.original_value!r} was resolved "
+                                f"by alias to {enum_candidate.canonical_value!r}."
+                            ),
+                            entity_id=parsed_entity.entity_id,
+                            entity_type=parsed_entity.entity_type,
+                            field_label=parsed_field.label,
+                        )
+                    )
 
                 unit_label, unit_candidate = _get_unit_candidate_for_trace(
                     original_value=original_value,

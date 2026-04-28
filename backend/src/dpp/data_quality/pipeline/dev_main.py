@@ -33,6 +33,7 @@ EXAMPLES = {
     "unit_fuzzy_candidate": ("product", "harmonization/unit_fuzzy_candidate_input.json"),
     "unit_ambiguous": ("emission", "harmonization/unit_ambiguous_input.json"),
     "unit_unsupported": ("product", "harmonization/unit_unsupported_input.json"),
+    "enum_alias": ("emission", "harmonization/enum_alias_input.json"),
     "mixed_dirty": ("product", "harmonization/mixed_dirty_input.json"),
 }
 
