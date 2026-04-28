@@ -3,7 +3,8 @@ Unit and value normalization helpers for the harmonization layer.
 
 The module is intentionally conservative and rule-based. It supports exact unit
 aliases first and a small fuzzy fallback for obvious spelling variants. It also
-supports exact controlled-vocabulary alias normalization. It does not use
+supports exact controlled-vocabulary alias normalization and a small fuzzy
+fallback for obvious controlled-vocabulary spelling variants. It does not use
 embeddings or semantic matching.
 """
 
@@ -20,6 +21,9 @@ class NormalizationError(ValueError):
 
 AUTO_UNIT_FUZZY_THRESHOLD = 0.92
 AMBIGUOUS_UNIT_FUZZY_THRESHOLD = 0.80
+
+AUTO_ENUM_FUZZY_THRESHOLD = 0.95
+AMBIGUOUS_ENUM_FUZZY_THRESHOLD = 0.85
 
 
 @dataclass(frozen=True)
@@ -320,20 +324,83 @@ def _enum_lookup_table(canonical_path: str) -> dict[str, tuple[str, str]]:
     return lookup
 
 
-def resolve_enum_value(canonical_path: str, value: Any) -> EnumNormalizationCandidate | None:
-    """Resolve a controlled-vocabulary value by direct canonical match or exact alias."""
+def _similarity(left: str, right: str) -> float:
+    """Return a normalized similarity score between two normalized labels."""
+    if not left or not right:
+        return 0.0
+    return SequenceMatcher(None, left, right).ratio()
+
+
+def find_enum_value_candidates(
+    canonical_path: str,
+    value: Any,
+    min_confidence: float = AMBIGUOUS_ENUM_FUZZY_THRESHOLD,
+) -> list[EnumNormalizationCandidate]:
+    """
+    Find exact or fuzzy candidates for a controlled-vocabulary value.
+
+    The fuzzy fallback is intentionally conservative and is meant for obvious
+    spelling variants of canonical enum values or known aliases. Paraphrases
+    should be handled by a later semantic matching layer instead.
+    """
+
     if not isinstance(value, str):
+        return []
+
+    key = _normalize_enum_key(value)
+    if not key:
+        return []
+
+    lookup = _enum_lookup_table(canonical_path)
+    exact = lookup.get(key)
+    if exact is not None:
+        canonical_value, match_type = exact
+        return [
+            EnumNormalizationCandidate(
+                original_value=value,
+                canonical_value=canonical_value,
+                confidence=1.0,
+                match_type=match_type,
+            )
+        ]
+
+    candidates_by_value: dict[str, EnumNormalizationCandidate] = {}
+    for alias_key, (canonical_value, _) in lookup.items():
+        score = _similarity(key, alias_key)
+        if score < min_confidence:
+            continue
+
+        current = candidates_by_value.get(canonical_value)
+        if current is None or score > current.confidence:
+            candidates_by_value[canonical_value] = EnumNormalizationCandidate(
+                original_value=value,
+                canonical_value=canonical_value,
+                confidence=score,
+                match_type="fuzzy",
+            )
+
+    return sorted(candidates_by_value.values(), key=lambda item: item.confidence, reverse=True)
+
+
+def resolve_enum_value(
+    canonical_path: str,
+    value: Any,
+    auto_threshold: float = AUTO_ENUM_FUZZY_THRESHOLD,
+) -> EnumNormalizationCandidate | None:
+    """Resolve a controlled-vocabulary value by canonical match, alias, or conservative fuzzy fallback."""
+    candidates = find_enum_value_candidates(canonical_path, value)
+    if not candidates:
         return None
-    resolved = _enum_lookup_table(canonical_path).get(_normalize_enum_key(value))
-    if resolved is None:
-        return None
-    canonical_value, match_type = resolved
-    return EnumNormalizationCandidate(
-        original_value=value,
-        canonical_value=canonical_value,
-        confidence=1.0,
-        match_type=match_type,
-    )
+
+    top = candidates[0]
+    if top.match_type in {"canonical", "alias"}:
+        return top
+
+    second_score = candidates[1].confidence if len(candidates) > 1 else 0.0
+    if top.confidence >= auto_threshold and (top.confidence - second_score) >= 0.05:
+        return top
+
+    return None
 
 
 def normalize_enum_value(canonical_path: str, value: Any) -> str:
@@ -343,19 +410,25 @@ def normalize_enum_value(canonical_path: str, value: Any) -> str:
             f"Controlled-vocabulary field {canonical_path!r} must contain a string value, "
             f"got {type(value).__name__}."
         )
+
     candidate = resolve_enum_value(canonical_path, value)
-    if candidate is None:
-        raise NormalizationError(
-            f"Unsupported controlled-vocabulary value {value!r} for field {canonical_path!r}."
+    if candidate is not None:
+        return candidate.canonical_value
+
+    candidates = find_enum_value_candidates(canonical_path, value)
+    if candidates:
+        candidate_text = ", ".join(
+            f"{candidate.canonical_value} ({candidate.confidence:.2f})"
+            for candidate in candidates[:3]
         )
-    return candidate.canonical_value
+        raise NormalizationError(
+            f"Controlled-vocabulary value {value!r} for field {canonical_path!r} is ambiguous. "
+            f"Possible candidates: {candidate_text}."
+        )
 
-
-def _similarity(left: str, right: str) -> float:
-    """Return a normalized similarity score between two normalized unit labels."""
-    if not left or not right:
-        return 0.0
-    return SequenceMatcher(None, left, right).ratio()
+    raise NormalizationError(
+        f"Unsupported controlled-vocabulary value {value!r} for field {canonical_path!r}."
+    )
 
 
 def _known_canonical_units() -> set[str]:

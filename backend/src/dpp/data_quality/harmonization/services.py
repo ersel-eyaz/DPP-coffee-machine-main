@@ -196,7 +196,7 @@ def _get_unit_candidate_for_trace(
 
 
 def _normalize_controlled_vocabulary_field(canonical_path: str, value: Any) -> str:
-    """Normalize a controlled-vocabulary field by direct canonical match or exact alias."""
+    """Normalize a controlled-vocabulary field by canonical match, alias, or conservative fuzzy fallback."""
     scalar_value, _ = _extract_value_and_unit(value)
     return normalize_enum_value(canonical_path, scalar_value)
 
@@ -453,6 +453,21 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                             message=(
                                 f"Controlled-vocabulary value {enum_candidate.original_value!r} was resolved "
                                 f"by alias to {enum_candidate.canonical_value!r}."
+                            ),
+                            entity_id=parsed_entity.entity_id,
+                            entity_type=parsed_entity.entity_type,
+                            field_label=parsed_field.label,
+                        )
+                    )
+
+                if enum_candidate is not None and enum_candidate.match_type == "fuzzy":
+                    issues.append(
+                        HarmonizationIssue(
+                            severity="info",
+                            message=(
+                                f"Controlled-vocabulary value {enum_candidate.original_value!r} was resolved "
+                                f"by fuzzy fallback to {enum_candidate.canonical_value!r} "
+                                f"with confidence {enum_candidate.confidence:.2f}."
                             ),
                             entity_id=parsed_entity.entity_id,
                             entity_type=parsed_entity.entity_type,
