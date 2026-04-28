@@ -7,6 +7,7 @@ backend. It is only used to run the isolated data_quality module locally.
 Usage:
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main product
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission
+    PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main label_fuzzy_candidate
 """
 
 from __future__ import annotations
@@ -20,9 +21,19 @@ from typing import Any
 from dpp.data_quality.harmonization.services import harmonize_document
 
 
-EXAMPLE_FILES = {
-    "product": "product_dirty.json",
-    "emission": "emission_dirty.json",
+EXAMPLES = {
+    "product": ("product", "product_dirty.json"),
+    "emission": ("emission", "emission_dirty.json"),
+
+    # Controlled scenario examples.
+    "label_exact_alias": ("product", "harmonization/label_exact_alias_input.json"),
+    "label_fuzzy_candidate": ("product", "harmonization/label_fuzzy_candidate_input.json"),
+    "label_ambiguous": ("product", "harmonization/label_ambiguous_input.json"),
+    "unit_exact_alias": ("product", "harmonization/unit_exact_alias_input.json"),
+    "unit_fuzzy_candidate": ("product", "harmonization/unit_fuzzy_candidate_input.json"),
+    "unit_ambiguous": ("emission", "harmonization/unit_ambiguous_input.json"),
+    "unit_unsupported": ("product", "harmonization/unit_unsupported_input.json"),
+    "mixed_dirty": ("product", "harmonization/mixed_dirty_input.json"),
 }
 
 
@@ -31,23 +42,24 @@ def _examples_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "examples"
 
 
-def _load_example(scope_name: str) -> dict[str, Any]:
-    """Load the example JSON document for a scope."""
-    filename = EXAMPLE_FILES.get(scope_name)
-    if filename is None:
-        supported = ", ".join(sorted(EXAMPLE_FILES))
-        raise ValueError(f"Unsupported example scope {scope_name!r}. Supported: {supported}")
+def _load_example(example_name: str) -> tuple[str, dict[str, Any]]:
+    """Load the example JSON document and return its scope name."""
+    entry = EXAMPLES.get(example_name)
+    if entry is None:
+        supported = ", ".join(sorted(EXAMPLES))
+        raise ValueError(f"Unsupported example {example_name!r}. Supported: {supported}")
 
+    scope_name, filename = entry
     path = _examples_dir() / filename
     with path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+        return scope_name, json.load(file)
 
 
 def main() -> None:
     """Run one local harmonization example and print the result as JSON."""
-    scope_name = sys.argv[1] if len(sys.argv) > 1 else "product"
+    example_name = sys.argv[1] if len(sys.argv) > 1 else "product"
 
-    document = _load_example(scope_name)
+    scope_name, document = _load_example(example_name)
     result = harmonize_document(document, scope_name)
 
     print(json.dumps(asdict(result), indent=2, ensure_ascii=False))

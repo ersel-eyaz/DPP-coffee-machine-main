@@ -1,0 +1,23 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-unit-fuzzy-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:productWeight": {
+        "value": 2.5,
+        "unit": "kilogrm"
+      },
+      "dpp:productHeight": {
+        "value": 450,
+        "unit": "millimetre"
+      },
+      "dpp:productWidth": {
+        "value": 28,
+        "unit": "centimter"
+      }
+    }
+  ]
+}

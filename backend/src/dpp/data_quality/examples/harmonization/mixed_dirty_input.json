@@ -1,0 +1,53 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-mixed-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:productWeight": {
+        "value": 2.5,
+        "unit": "kg"
+      },
+      "dpp:productHeigth": {
+        "value": 450,
+        "unit": "millimetre"
+      },
+      "dpp:productWidth": {
+        "value": 28,
+        "unit": "centimter"
+      },
+      "dpp:unknownField": "kept as unmapped"
+    },
+    {
+      "@id": "material-instance-mixed-001",
+      "@type": "dpp:MaterialInstance",
+      "dpp:materialMass": {
+        "value": 1.2,
+        "unit": "kilogrm"
+      },
+      "dpp:recycledShare": {
+        "value": 30,
+        "unit": "percent"
+      },
+      "dpp:materialPurity": {
+        "value": 0.95,
+        "unit": "ratio"
+      }
+    },
+    {
+      "@id": "dpp-instance-mixed-001",
+      "@type": "dpp:DPPInstance",
+      "dpp:operatingHrs": {
+        "value": 120,
+        "unit": "hours"
+      },
+      "dpp:brewingCyles": 300,
+      "dpp:weight": {
+        "value": 2.5,
+        "unit": "kg"
+      }
+    }
+  ]
+}

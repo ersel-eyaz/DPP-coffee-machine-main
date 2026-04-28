@@ -1,0 +1,19 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-unit-unsupported-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:productWeight": {
+        "value": 2.5,
+        "unit": "box"
+      },
+      "dpp:productHeight": {
+        "value": 45,
+        "unit": "unknown_unit"
+      }
+    }
+  ]
+}

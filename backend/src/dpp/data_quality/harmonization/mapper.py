@@ -9,6 +9,7 @@ normalizers.py and services.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 
 from dpp.data_quality.scopes import SUPPORTED_SCOPES
 from dpp.data_quality.scopes.schemas import CanonicalField, ScopeDefinition
@@ -16,6 +17,10 @@ from dpp.data_quality.scopes.schemas import CanonicalField, ScopeDefinition
 
 class MappingError(ValueError):
     """Raised when a field label cannot be mapped safely."""
+
+
+AUTO_FUZZY_THRESHOLD = 0.92
+AMBIGUOUS_FUZZY_THRESHOLD = 0.80
 
 
 @dataclass(frozen=True)
@@ -222,9 +227,47 @@ def _canonical_fields_by_path(scope: ScopeDefinition) -> dict[str, CanonicalFiel
     return {field.path: field for field in scope.fields}
 
 
+def _build_candidate(label: str, canonical_path: str, canonical_fields: dict[str, CanonicalField], confidence: float) -> FieldMappingCandidate:
+    """Build a mapping candidate and fail loudly if the target path is invalid."""
+
+    canonical_field = canonical_fields.get(canonical_path)
+
+    if canonical_field is None:
+        raise MappingError(f"Mapping for label {label!r} points to unregistered field {canonical_path!r}.")
+
+    return FieldMappingCandidate(
+        original_label=label,
+        canonical_path=canonical_field.path,
+        entity_type=canonical_field.entity_type,
+        field_name=canonical_field.field_name,
+        confidence=confidence,
+    )
+
+
+def _similarity(left: str, right: str) -> float:
+    """Return a normalized similarity score between two normalized labels."""
+
+    if not left or not right:
+        return 0.0
+
+    return SequenceMatcher(None, left, right).ratio()
+
+
+def _candidate_alias_mappings(scope_name: str, entity_type: str | None) -> dict[str, str]:
+    """Return aliases that are safe to compare for the current entity context."""
+
+    raw_mappings: dict[str, str] = {}
+    raw_mappings.update(_SCOPE_MAPPINGS.get(scope_name, {}))
+
+    if entity_type is not None:
+        raw_mappings.update(_ENTITY_CONTEXT_MAPPINGS.get((scope_name, entity_type), {}))
+
+    return raw_mappings
+
+
 def map_field_label(label: str, scope_name: str, entity_type: str | None = None) -> FieldMappingCandidate | None:
     """
-    Map a dirty field label to a canonical field path.
+    Map a dirty field label to a canonical field path using exact aliases only.
 
     Args:
         label: Original input label.
@@ -255,21 +298,75 @@ def map_field_label(label: str, scope_name: str, entity_type: str | None = None)
         return None
 
     canonical_fields = _canonical_fields_by_path(scope)
-    canonical_field = canonical_fields.get(canonical_path)
-
-    if canonical_field is None:
-        raise MappingError(
-            f"Mapping for label {label!r} points to field {canonical_path!r}, "
-            f"but this field is not registered in scope {scope_name!r}."
-        )
-
-    return FieldMappingCandidate(
-        original_label=label,
-        canonical_path=canonical_field.path,
-        entity_type=canonical_field.entity_type,
-        field_name=canonical_field.field_name,
+    return _build_candidate(
+        label=label,
+        canonical_path=canonical_path,
+        canonical_fields=canonical_fields,
         confidence=1.0,
     )
+
+
+def find_field_label_candidates(
+    label: str,
+    scope_name: str,
+    entity_type: str | None = None,
+    min_confidence: float = AMBIGUOUS_FUZZY_THRESHOLD,
+) -> list[FieldMappingCandidate]:
+    """
+    Find conservative fuzzy fallback candidates for a dirty field label.
+
+    This function is intended to be called only after map_field_label() returned
+    None. It keeps the search entity-aware: when an entity type is known, only
+    canonical fields belonging to that entity are considered. This avoids broad
+    cross-entity matches such as mapping a generic "weight" label to a material,
+    part, or product field without enough context.
+    """
+
+    scope = SUPPORTED_SCOPES.get(scope_name)
+    if scope is None:
+        raise MappingError(f"Unsupported scope: {scope_name!r}")
+
+    normalized_label = _normalize_label(label)
+    canonical_fields = _canonical_fields_by_path(scope)
+    candidate_scores: dict[str, float] = {}
+
+    for alias, canonical_path in _candidate_alias_mappings(scope_name, entity_type).items():
+        canonical_field = canonical_fields.get(canonical_path)
+        if canonical_field is None:
+            continue
+
+        if entity_type is not None and canonical_field.entity_type != entity_type:
+            continue
+
+        score = _similarity(normalized_label, alias)
+        if score >= min_confidence:
+            candidate_scores[canonical_path] = max(candidate_scores.get(canonical_path, 0.0), score)
+
+    for canonical_path, canonical_field in canonical_fields.items():
+        if entity_type is not None and canonical_field.entity_type != entity_type:
+            continue
+
+        canonical_label_variants = (
+            _normalize_label(canonical_field.field_name),
+            _normalize_label(canonical_field.path),
+        )
+
+        for canonical_label in canonical_label_variants:
+            score = _similarity(normalized_label, canonical_label)
+            if score >= min_confidence:
+                candidate_scores[canonical_path] = max(candidate_scores.get(canonical_path, 0.0), score)
+
+    candidates = [
+        _build_candidate(
+            label=label,
+            canonical_path=canonical_path,
+            canonical_fields=canonical_fields,
+            confidence=score,
+        )
+        for canonical_path, score in candidate_scores.items()
+    ]
+
+    return sorted(candidates, key=lambda item: item.confidence, reverse=True)
 
 
 def get_label_mappings(scope_name: str) -> dict[str, str]:

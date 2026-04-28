@@ -1,0 +1,19 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "activity-ambiguous-001",
+      "@type": "dpp:ActivityData",
+      "dpp:measuredAmount": 10,
+      "dpp:activityUnit": "unit"
+    },
+    {
+      "@id": "factor-ambiguous-001",
+      "@type": "dpp:EmissionFactor",
+      "dpp:co2Factor": 0.3,
+      "dpp:factorUnit": "kg CO2 equivalent per unit"
+    }
+  ]
+}

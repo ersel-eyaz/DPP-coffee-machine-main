@@ -1,0 +1,27 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-unit-exact-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:productWeight": {
+        "value": 2.5,
+        "unit": "kilograms"
+      },
+      "dpp:productHeight": {
+        "value": 450,
+        "unit": "millimeters"
+      },
+      "dpp:productWidth": {
+        "value": 28,
+        "unit": "centimetres"
+      },
+      "dpp:productDepth": {
+        "value": 0.36,
+        "unit": "meters"
+      }
+    }
+  ]
+}

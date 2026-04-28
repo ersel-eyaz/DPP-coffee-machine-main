@@ -9,12 +9,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from dpp.data_quality.harmonization.mapper import map_field_label
+from dpp.data_quality.harmonization.mapper import (
+    AUTO_FUZZY_THRESHOLD,
+    find_field_label_candidates,
+    map_field_label,
+)
 from dpp.data_quality.harmonization.normalizers import (
     NormalizationError,
+    find_unit_label_candidates,
     normalize_unit_label,
     normalize_value_to_unit,
     normalize_without_unit,
+    resolve_unit_label,
 )
 from dpp.data_quality.harmonization.parser import ParsedEntity, parse_jsonld_document
 from dpp.data_quality.harmonization.schemas import (
@@ -121,17 +127,26 @@ def _target_unit_for_activity_quantity(source_unit: str | None) -> str | None:
 
 
 def _normalize_unit_field(value: Any) -> str:
-    """Normalize an explicit unit field value."""
+    """Normalize an explicit unit field value with exact or conservative fuzzy matching."""
     scalar_value, _ = _extract_value_and_unit(value)
     if not isinstance(scalar_value, str):
         raise NormalizationError(f"Unit field must contain a string value, got {type(scalar_value).__name__}")
 
-    normalized = normalize_unit_label(scalar_value)
-    if normalized is None:
-        raise NormalizationError("Unit field cannot be None.")
+    candidate = resolve_unit_label(scalar_value)
+    if candidate is None:
+        candidates = find_unit_label_candidates(scalar_value)
+        if candidates:
+            candidate_text = ", ".join(
+                f"{candidate.canonical_unit} ({candidate.confidence:.2f})"
+                for candidate in candidates[:3]
+            )
+            raise NormalizationError(
+                f"Unit label {scalar_value!r} is ambiguous. Possible candidates: {candidate_text}."
+            )
 
-    return normalized
+        raise NormalizationError(f"Unsupported unit label: {scalar_value!r}")
 
+    return candidate.canonical_unit
 
 def _collect_explicit_units(parsed_entity: ParsedEntity, scope_name: str) -> dict[str, str]:
     """
@@ -156,6 +171,26 @@ def _collect_explicit_units(parsed_entity: ParsedEntity, scope_name: str) -> dic
             continue
 
     return explicit_units
+
+
+
+def _get_unit_candidate_for_trace(
+    original_value: Any,
+    original_unit: str | None,
+    canonical_field: CanonicalField,
+) -> tuple[str | None, Any | None]:
+    """Return the unit label and candidate used for unit traceability."""
+
+    if canonical_field.role == "unit_harmonization":
+        scalar_value, _ = _extract_value_and_unit(original_value)
+        unit_label = scalar_value if isinstance(scalar_value, str) else None
+    else:
+        unit_label = original_unit
+
+    if unit_label is None:
+        return None, None
+
+    return unit_label, resolve_unit_label(unit_label)
 
 
 def _normalize_mapped_value(
@@ -237,6 +272,56 @@ def _align_explicit_unit_fields(fields: dict[str, HarmonizedField]) -> None:
         )
 
 
+def _resolve_field_mapping(label: str, scope_name: str, entity_type: str) -> tuple[Any, list[HarmonizationIssue]]:
+    """Resolve a field label with exact mapping first and conservative fuzzy fallback second."""
+
+    mapping = map_field_label(label, scope_name, entity_type=entity_type)
+    if mapping is not None:
+        return mapping, []
+
+    candidates = find_field_label_candidates(
+        label=label,
+        scope_name=scope_name,
+        entity_type=entity_type,
+    )
+
+    if candidates:
+        top_candidate = candidates[0]
+        second_score = candidates[1].confidence if len(candidates) > 1 else 0.0
+        confidence_gap = top_candidate.confidence - second_score
+
+        if top_candidate.confidence >= AUTO_FUZZY_THRESHOLD and confidence_gap >= 0.05:
+            return top_candidate, [
+                HarmonizationIssue(
+                    severity="info",
+                    message=(
+                        f"Field label {label!r} was mapped by fuzzy fallback to "
+                        f"{top_candidate.canonical_path!r} with confidence {top_candidate.confidence:.2f}."
+                    ),
+                    entity_type=entity_type,
+                    field_label=label,
+                )
+            ]
+
+        candidate_text = ", ".join(
+            f"{candidate.canonical_path} ({candidate.confidence:.2f})"
+            for candidate in candidates[:3]
+        )
+        return None, [
+            HarmonizationIssue(
+                severity="warning",
+                message=(
+                    f"Field label {label!r} could not be mapped exactly. "
+                    f"Possible candidates: {candidate_text}."
+                ),
+                entity_type=entity_type,
+                field_label=label,
+            )
+        ]
+
+    return None, []
+
+
 def harmonize_document(document: dict[str, Any], scope_name: str) -> HarmonizationResult:
     """
     Harmonize a JSON-LD-like input document for a selected scope.
@@ -275,7 +360,22 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
             )
 
         for parsed_field in parsed_entity.fields:
-            mapping = map_field_label(parsed_field.label, scope_name, entity_type=parsed_entity.entity_type)
+            mapping, mapping_issues = _resolve_field_mapping(
+                label=parsed_field.label,
+                scope_name=scope_name,
+                entity_type=parsed_entity.entity_type,
+            )
+
+            for mapping_issue in mapping_issues:
+                issues.append(
+                    HarmonizationIssue(
+                        severity=mapping_issue.severity,
+                        message=mapping_issue.message,
+                        entity_id=parsed_entity.entity_id,
+                        entity_type=mapping_issue.entity_type,
+                        field_label=mapping_issue.field_label,
+                    )
+                )
 
             if mapping is None:
                 unmapped_fields.append(
@@ -324,6 +424,25 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                     canonical_field=canonical_field,
                 )
                 status = "normalized" if normalized_unit is not None or canonical_field.role == "unit_harmonization" else "mapped"
+
+                unit_label, unit_candidate = _get_unit_candidate_for_trace(
+                    original_value=original_value,
+                    original_unit=original_unit,
+                    canonical_field=canonical_field,
+                )
+                if unit_candidate is not None and unit_candidate.match_type == "fuzzy":
+                    issues.append(
+                        HarmonizationIssue(
+                            severity="info",
+                            message=(
+                                f"Unit label {unit_label!r} was resolved by fuzzy fallback to "
+                                f"{unit_candidate.canonical_unit!r} with confidence {unit_candidate.confidence:.2f}."
+                            ),
+                            entity_id=parsed_entity.entity_id,
+                            entity_type=parsed_entity.entity_type,
+                            field_label=parsed_field.label,
+                        )
+                    )
             except NormalizationError as exc:
                 normalized_value = None
                 normalized_unit = None

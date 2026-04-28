@@ -1,0 +1,17 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-ambiguous-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:weight": {
+        "value": 2.5,
+        "unit": "kg"
+      },
+      "dpp:value": 42,
+      "dpp:amount": 3
+    }
+  ]
+}

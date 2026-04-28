@@ -1,0 +1,36 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-fuzzy-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:prodWeight": {
+        "value": 2.5,
+        "unit": "kg"
+      },
+      "dpp:productHeigth": {
+        "value": 45,
+        "unit": "cm"
+      },
+      "dpp:productWidht": {
+        "value": 280,
+        "unit": "mm"
+      },
+      "dpp:productDepht": {
+        "value": 0.36,
+        "unit": "m"
+      }
+    },
+    {
+      "@id": "dpp-instance-fuzzy-001",
+      "@type": "dpp:DPPInstance",
+      "dpp:operatingHrs": {
+        "value": 120,
+        "unit": "hours"
+      },
+      "dpp:brewingCyles": 300
+    }
+  ]
+}

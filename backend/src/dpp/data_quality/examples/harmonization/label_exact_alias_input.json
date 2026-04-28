@@ -1,0 +1,37 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-exact-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:productWeight": {
+        "value": 2.5,
+        "unit": "kg"
+      },
+      "dpp:productHeight": {
+        "value": 45,
+        "unit": "cm"
+      },
+      "dpp:productWidth": {
+        "value": 280,
+        "unit": "mm"
+      },
+      "dpp:productDepth": {
+        "value": 0.36,
+        "unit": "m"
+      }
+    },
+    {
+      "@id": "dpp-instance-exact-001",
+      "@type": "dpp:DPPInstance",
+      "dpp:runtime": {
+        "value": 120,
+        "unit": "hours"
+      },
+      "dpp:brewCycles": 300,
+      "dpp:cleaningCycles": 12
+    }
+  ]
+}
