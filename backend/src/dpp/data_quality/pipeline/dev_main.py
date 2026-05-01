@@ -8,16 +8,22 @@ Usage:
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main product
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main label_fuzzy_candidate
+    PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output data
+    PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output report
 """
 
 from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from dpp.data_quality.harmonization.outputs import (
+    build_clean_jsonld,
+    build_full_output,
+    build_harmonization_report,
+)
 from dpp.data_quality.harmonization.services import harmonize_document
 
 
@@ -57,15 +63,43 @@ def _load_example(example_name: str) -> tuple[str, dict[str, Any]]:
         return scope_name, json.load(file)
 
 
+def _parse_output_mode(args: list[str]) -> str:
+    """Parse the optional --output argument."""
+    if "--output" not in args:
+        return "full"
+
+    index = args.index("--output")
+    try:
+        output_mode = args[index + 1]
+    except IndexError as exc:
+        raise ValueError("--output requires one of: data, report, full") from exc
+
+    if output_mode not in {"data", "report", "full"}:
+        raise ValueError("--output requires one of: data, report, full")
+
+    return output_mode
+
+
 def main() -> None:
-    """Run one local harmonization example and print the result as JSON."""
-    example_name = sys.argv[1] if len(sys.argv) > 1 else "product"
+    """Run one local harmonization example and print valid JSON."""
+    args = sys.argv[1:]
+    example_name = args[0] if args and not args[0].startswith("--") else "product"
+    output_mode = _parse_output_mode(args)
 
     scope_name, document = _load_example(example_name)
     result = harmonize_document(document, scope_name)
 
-    print(json.dumps(asdict(result), indent=2, ensure_ascii=False))
-    print(f"has_errors: {result.has_errors()}")
+    if output_mode == "data":
+        payload = build_clean_jsonld(result, document=document)
+    elif output_mode == "report":
+        payload = {
+            "report": build_harmonization_report(result),
+            "has_errors": result.has_errors(),
+        }
+    else:
+        payload = build_full_output(result, document=document)
+
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

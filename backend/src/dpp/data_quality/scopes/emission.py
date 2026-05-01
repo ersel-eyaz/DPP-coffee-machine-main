@@ -37,12 +37,14 @@ EMISSION_SCOPE = ScopeDefinition(
             entity_type="ActivityData",
             field_name="quantity",
             role="label_harmonization",
+            paired_unit_field="ActivityData.unit",
             description="Activity quantity used as input for emission calculation.",
         ),
         CanonicalField(
             entity_type="EmissionFactor",
             field_name="value",
             role="label_harmonization",
+            paired_unit_field="EmissionFactor.unit",
             description="Emission factor numeric value.",
         ),
         CanonicalField(

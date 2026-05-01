@@ -283,6 +283,43 @@ def _align_explicit_unit_fields(fields: dict[str, HarmonizedField]) -> None:
         )
 
 
+
+def _suppress_explicit_unit_metadata(
+    fields: dict[str, HarmonizedField],
+    canonical_fields: dict[str, CanonicalField],
+) -> None:
+    """
+    Remove unit trace metadata from numeric fields whose unit is a separate field.
+
+    Example:
+        ActivityData.quantity uses ActivityData.unit as an explicit model field.
+        The quantity report should show only the numeric value normalization,
+        while ActivityData.unit carries the unit harmonization trace.
+
+    Product/material fields such as MaterialInstance.weightGRM do not define a
+    paired unit field, so their conversion metadata remains visible in the report.
+    """
+
+    for canonical_path, canonical_field in canonical_fields.items():
+        if canonical_field.paired_unit_field is None:
+            continue
+
+        field = fields.get(canonical_path)
+        if field is None:
+            continue
+
+        fields[canonical_path] = HarmonizedField(
+            canonical_path=field.canonical_path,
+            original_label=field.original_label,
+            original_value=field.original_value,
+            normalized_value=field.normalized_value,
+            original_unit=None,
+            normalized_unit=None,
+            status=field.status,
+            confidence=field.confidence,
+        )
+
+
 def _resolve_field_mapping(label: str, scope_name: str, entity_type: str) -> tuple[Any, list[HarmonizationIssue]]:
     """Resolve a field label with exact mapping first and conservative fuzzy fallback second."""
 
@@ -519,6 +556,7 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
             )
 
         _align_explicit_unit_fields(fields)
+        _suppress_explicit_unit_metadata(fields, canonical_fields)
 
         harmonized_entities[parsed_entity.entity_id] = HarmonizedEntity(
             entity_id=parsed_entity.entity_id,

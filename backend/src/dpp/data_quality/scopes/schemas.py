@@ -31,6 +31,10 @@ class CanonicalField:
         field_name: Canonical field name as used in the prototype code.
         role: How this field is used in the data quality layer.
         target_unit: Canonical unit after normalization, if applicable.
+        paired_unit_field: Canonical unit field that carries this numeric field's unit,
+            if the unit is represented as a separate model field. In this case,
+            unit metadata is used for conversion but not reported on the numeric
+            field itself.
         description: Short explanation for documentation and reports.
     """
 
@@ -38,6 +42,7 @@ class CanonicalField:
     field_name: str
     role: FieldRole
     target_unit: str | None = None
+    paired_unit_field: str | None = None
     description: str = ""
 
     @property
