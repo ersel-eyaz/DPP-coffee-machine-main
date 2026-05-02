@@ -60,8 +60,15 @@ class HarmonizedField:
         original_unit: Unit as found in the input, if available.
         normalized_unit: Canonical unit after normalization, if applicable.
         status: Harmonization status.
-        confidence: Confidence score for the mapping. Rule-based exact mappings
-            should usually use 1.0.
+        confidence: Backward-compatible field mapping confidence. This is kept for
+            older callers and should be read as field_confidence.
+        field_confidence: Confidence score for the field-label mapping.
+        value_confidence: Confidence score for value or unit normalization, if
+            such normalization was applied.
+        field_method: Method used for field-label mapping, e.g.
+            'exact_or_alias' or 'fuzzy'.
+        value_method: Method used for value/unit normalization, e.g.
+            'canonical', 'alias', 'fuzzy', 'unit_conversion', or 'parsed'.
     """
 
     canonical_path: str
@@ -72,6 +79,10 @@ class HarmonizedField:
     normalized_unit: str | None = None
     status: HarmonizationStatus = "mapped"
     confidence: float = 1.0
+    field_confidence: float | None = None
+    value_confidence: float | None = None
+    field_method: str | None = None
+    value_method: str | None = None
 
 
 @dataclass(frozen=True)

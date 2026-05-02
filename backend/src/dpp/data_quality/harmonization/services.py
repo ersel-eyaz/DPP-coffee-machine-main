@@ -7,6 +7,7 @@ normalizers, and harmonization result schemas into one small workflow.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from dpp.data_quality.harmonization.mapper import (
@@ -271,15 +272,11 @@ def _align_explicit_unit_fields(fields: dict[str, HarmonizedField]) -> None:
         if value_field.normalized_unit is None:
             continue
 
-        fields[unit_path] = HarmonizedField(
-            canonical_path=unit_field.canonical_path,
-            original_label=unit_field.original_label,
-            original_value=unit_field.original_value,
+        fields[unit_path] = replace(
+            unit_field,
             normalized_value=value_field.normalized_unit,
-            original_unit=unit_field.original_unit,
-            normalized_unit=unit_field.normalized_unit,
-            status=unit_field.status,
-            confidence=unit_field.confidence,
+            value_confidence=value_field.value_confidence,
+            value_method=value_field.value_method,
         )
 
 
@@ -308,15 +305,10 @@ def _suppress_explicit_unit_metadata(
         if field is None:
             continue
 
-        fields[canonical_path] = HarmonizedField(
-            canonical_path=field.canonical_path,
-            original_label=field.original_label,
-            original_value=field.original_value,
-            normalized_value=field.normalized_value,
+        fields[canonical_path] = replace(
+            field,
             original_unit=None,
             normalized_unit=None,
-            status=field.status,
-            confidence=field.confidence,
         )
 
 
@@ -455,6 +447,8 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                 )
                 continue
 
+            field_method = "fuzzy" if mapping.confidence < 1.0 else "exact_or_alias"
+
             canonical_field = canonical_fields[mapping.canonical_path]
             original_value = parsed_field.value
             value_for_normalization, original_unit = _extract_value_and_unit(parsed_field.value)
@@ -464,6 +458,9 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                     original_unit = explicit_units.get("ActivityData.unit")
                 elif mapping.canonical_path == "EmissionFactor.value":
                     original_unit = explicit_units.get("EmissionFactor.unit")
+
+            value_confidence: float | None = None
+            value_method: str | None = None
 
             try:
                 normalized_value, normalized_unit = _normalize_mapped_value(
@@ -482,6 +479,9 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                 if canonical_field.role == "controlled_vocabulary":
                     scalar_value, _ = _extract_value_and_unit(original_value)
                     enum_candidate = resolve_enum_value(canonical_field.path, scalar_value)
+                    if enum_candidate is not None:
+                        value_confidence = enum_candidate.confidence
+                        value_method = enum_candidate.match_type
 
                 if enum_candidate is not None and enum_candidate.match_type == "alias":
                     issues.append(
@@ -517,6 +517,13 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                     original_unit=original_unit,
                     canonical_field=canonical_field,
                 )
+                if canonical_field.role == "unit_harmonization" and unit_candidate is not None:
+                    value_confidence = unit_candidate.confidence
+                    value_method = unit_candidate.match_type
+                elif normalized_unit is not None:
+                    value_confidence = unit_candidate.confidence if unit_candidate is not None else 1.0
+                    value_method = "unit_conversion"
+
                 if unit_candidate is not None and unit_candidate.match_type == "fuzzy":
                     issues.append(
                         HarmonizationIssue(
@@ -553,6 +560,10 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                 normalized_unit=normalized_unit,
                 status=status,
                 confidence=mapping.confidence,
+                field_confidence=mapping.confidence,
+                value_confidence=value_confidence,
+                field_method=field_method,
+                value_method=value_method,
             )
 
         _align_explicit_unit_fields(fields)
