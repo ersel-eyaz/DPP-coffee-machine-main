@@ -150,6 +150,56 @@ _ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
         "grindingcount": "DPPInstance.coffeeGrindingCount",
         "coffeegrindingcount": "DPPInstance.coffeeGrindingCount",
     },
+    # Service scope: free-text fields shared by secondary value steps.
+    ("service", "SecondaryValueStep"): {
+        "observedsymptoms": "SecondaryValueStep.observedSymptoms",
+        "symptoms": "SecondaryValueStep.observedSymptoms",
+        "reportedissues": "SecondaryValueStep.observedSymptoms",
+        "diagnose": "SecondaryValueStep.diagnose",
+        "diagnosis": "SecondaryValueStep.diagnose",
+        "servicediagnosis": "SecondaryValueStep.diagnose",
+    },
+    ("service", "RepairServiceStep"): {
+        "observedsymptoms": "RepairServiceStep.observedSymptoms",
+        "symptoms": "RepairServiceStep.observedSymptoms",
+        "reportedissues": "RepairServiceStep.observedSymptoms",
+        "diagnose": "RepairServiceStep.diagnose",
+        "diagnosis": "RepairServiceStep.diagnose",
+        "servicediagnosis": "RepairServiceStep.diagnose",
+    },
+    ("service", "ReplaceServiceStep"): {
+        "observedsymptoms": "ReplaceServiceStep.observedSymptoms",
+        "symptoms": "ReplaceServiceStep.observedSymptoms",
+        "reportedissues": "ReplaceServiceStep.observedSymptoms",
+        "diagnose": "ReplaceServiceStep.diagnose",
+        "diagnosis": "ReplaceServiceStep.diagnose",
+        "servicediagnosis": "ReplaceServiceStep.diagnose",
+    },
+    ("service", "CleaningServiceStep"): {
+        "observedsymptoms": "CleaningServiceStep.observedSymptoms",
+        "symptoms": "CleaningServiceStep.observedSymptoms",
+        "reportedissues": "CleaningServiceStep.observedSymptoms",
+        "diagnose": "CleaningServiceStep.diagnose",
+        "diagnosis": "CleaningServiceStep.diagnose",
+        "servicediagnosis": "CleaningServiceStep.diagnose",
+    },
+    ("service", "RefurbishmentServiceStep"): {
+        "observedsymptoms": "RefurbishmentServiceStep.observedSymptoms",
+        "symptoms": "RefurbishmentServiceStep.observedSymptoms",
+        "reportedissues": "RefurbishmentServiceStep.observedSymptoms",
+        "diagnose": "RefurbishmentServiceStep.diagnose",
+        "diagnosis": "RefurbishmentServiceStep.diagnose",
+        "servicediagnosis": "RefurbishmentServiceStep.diagnose",
+    },
+    ("service", "RemanufacturingServiceStep"): {
+        "observedsymptoms": "RemanufacturingServiceStep.observedSymptoms",
+        "symptoms": "RemanufacturingServiceStep.observedSymptoms",
+        "reportedissues": "RemanufacturingServiceStep.observedSymptoms",
+        "diagnose": "RemanufacturingServiceStep.diagnose",
+        "diagnosis": "RemanufacturingServiceStep.diagnose",
+        "servicediagnosis": "RemanufacturingServiceStep.diagnose",
+    },
+
     # Emission scope: activity data fields.
     ("emission", "ActivityData"): {
         "measuredamount": "ActivityData.quantity",

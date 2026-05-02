@@ -17,6 +17,7 @@ FieldRole = Literal[
     "label_harmonization",
     "unit_harmonization",
     "controlled_vocabulary",
+    "free_text_harmonization",
     "analysis_context",
 ]
 
@@ -108,6 +109,10 @@ class ScopeDefinition:
     def controlled_vocabulary_fields(self) -> tuple[CanonicalField, ...]:
         """Return fields that should receive controlled-vocabulary normalization."""
         return self.fields_by_role("controlled_vocabulary")
+
+    def free_text_harmonization_fields(self) -> tuple[CanonicalField, ...]:
+        """Return fields that should receive free-text concept normalization."""
+        return self.fields_by_role("free_text_harmonization")
 
     def relation_paths(self) -> tuple[str, ...]:
         """Return all preserved canonical relation paths."""

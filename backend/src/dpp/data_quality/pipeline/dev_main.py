@@ -10,6 +10,7 @@ Usage:
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main label_fuzzy_candidate
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output data
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output report
+    PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main service_text --output full
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ EXAMPLES = {
     "enum_fuzzy": ("emission", "harmonization/enum_fuzzy_input.json"),
     "enum_semantic": ("emission", "harmonization/enum_semantic_input.json"),
     "mixed_dirty": ("product", "harmonization/mixed_dirty_input.json"),
+    "service_text": ("service", "harmonization/service_text_input.json"),
 }
 
 

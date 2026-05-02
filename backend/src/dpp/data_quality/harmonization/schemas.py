@@ -130,6 +130,8 @@ class HarmonizedEntity:
         fields: Harmonized fields keyed by canonical path.
         relations: Trusted structural relations preserved from the input.
         unmapped_fields: Raw fields that could not be mapped.
+        text_harmonization: Free-text concept normalization details, separated
+            from structural field-label mapping.
         issues: Entity-level harmonization issues.
     """
 
@@ -138,6 +140,7 @@ class HarmonizedEntity:
     fields: dict[str, HarmonizedField] = field(default_factory=dict)
     relations: list[PreservedRelation] = field(default_factory=list)
     unmapped_fields: list[RawField] = field(default_factory=list)
+    text_harmonization: dict[str, Any] = field(default_factory=dict)
     issues: list[HarmonizationIssue] = field(default_factory=list)
 
 

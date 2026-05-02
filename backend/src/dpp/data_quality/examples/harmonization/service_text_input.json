@@ -1,0 +1,45 @@
+{
+  "@context": {
+    "dpp": "https://example.com/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "service-repair-001",
+      "@type": "dpp:RepairServiceStep",
+      "diagnose": "Seal wear in 3-way valve",
+      "observedSymptoms": [
+        "Dripping after brew",
+        "Pressure fluctuations"
+      ],
+      "costEur": 79.0
+    },
+    {
+      "@id": "service-replace-001",
+      "@type": "dpp:ReplaceServiceStep",
+      "diagnosis": "worn grinder burrs",
+      "symptoms": [
+        "watery espresso",
+        "uneven puck surface"
+      ],
+      "costEur": 59.0
+    },
+    {
+      "@id": "service-cleaning-001",
+      "@type": "dpp:CleaningServiceStep",
+      "diagnose": "scale buildup",
+      "observedSymptoms": [
+        "Steam sputtering",
+        "Noisy pump priming"
+      ],
+      "costEur": 25.0
+    },
+    {
+      "@id": "service-ambiguous-001",
+      "@type": "dpp:RepairServiceStep",
+      "diagnose": "customer says the machine behaves strangely",
+      "observedSymptoms": [
+        "strange taste after long idle period"
+      ]
+    }
+  ]
+}

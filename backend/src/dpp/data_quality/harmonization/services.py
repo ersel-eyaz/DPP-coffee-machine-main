@@ -10,6 +10,10 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from dpp.data_quality.harmonization.free_text import (
+    clean_text_normalization_value,
+    normalize_text_values,
+)
 from dpp.data_quality.harmonization.mapper import (
     AUTO_FUZZY_THRESHOLD,
     find_field_label_candidates,
@@ -202,6 +206,148 @@ def _normalize_controlled_vocabulary_field(canonical_path: str, value: Any) -> s
     return normalize_enum_value(canonical_path, scalar_value)
 
 
+def _free_text_kind_for_path(canonical_path: str) -> str:
+    """Return the concept registry kind for a free-text source field."""
+    if canonical_path.endswith(".observedSymptoms"):
+        return "symptom"
+
+    if canonical_path.endswith(".diagnose"):
+        return "diagnosis"
+
+    raise NormalizationError(f"Unsupported free-text harmonization field: {canonical_path!r}")
+
+
+def _free_text_summary(results: list[Any]) -> tuple[float | None, str | None, str]:
+    """Return value confidence, method, and field status for normalized free-text results."""
+    normalized = [result for result in results if result.status == "normalized" and result.confidence is not None]
+    if normalized:
+        confidence = sum(float(result.confidence) for result in normalized) / len(normalized)
+        methods = sorted({str(result.method) for result in normalized if result.method is not None})
+        method = methods[0] if len(methods) == 1 else "mixed"
+        return confidence, method, "normalized"
+
+    if any(result.status == "error" for result in results):
+        return None, None, "error"
+
+    if any(result.status == "ambiguous" for result in results):
+        return None, None, "ambiguous"
+
+    return None, None, "unmapped"
+
+
+def _free_text_issues(
+    *,
+    results: list[Any],
+    entity_id: str,
+    entity_type: str,
+    field_label: str,
+) -> list[HarmonizationIssue]:
+    """Build traceability issues for free-text concept normalization."""
+    issues: list[HarmonizationIssue] = []
+
+    for result in results:
+        if result.status == "normalized":
+            if result.method in {"alias", "fuzzy", "semantic", "mixed"}:
+                issues.append(
+                    HarmonizationIssue(
+                        severity="info",
+                        message=(
+                            f"Free-text value {result.original_text!r} was resolved by "
+                            f"{result.method} match to {result.normalized_concept!r} "
+                            f"with confidence {result.confidence:.2f}."
+                        ),
+                        entity_id=entity_id,
+                        entity_type=entity_type,
+                        field_label=field_label,
+                    )
+                )
+            continue
+
+        if result.status == "ambiguous":
+            candidate_text = ", ".join(
+                f"{candidate.concept_id} ({candidate.confidence:.2f}, {candidate.match_type})"
+                for candidate in result.candidates[:3]
+            )
+            issues.append(
+                HarmonizationIssue(
+                    severity="warning",
+                    message=(
+                        f"Free-text value {result.original_text!r} is ambiguous. "
+                        f"Possible concepts: {candidate_text}."
+                    ),
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    field_label=field_label,
+                )
+            )
+            continue
+
+        if result.status == "unresolved":
+            issues.append(
+                HarmonizationIssue(
+                    severity="warning",
+                    message=f"Free-text value {result.original_text!r} could not be mapped to a seeded concept.",
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    field_label=field_label,
+                )
+            )
+            continue
+
+        if result.status == "error":
+            issues.append(
+                HarmonizationIssue(
+                    severity="error",
+                    message=f"Free-text value {result.original_text!r} is not a valid string value.",
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    field_label=field_label,
+                )
+            )
+
+    return issues
+
+
+
+def _free_text_report_entry(result: Any) -> dict[str, Any]:
+    """Return a compact report entry for one free-text value."""
+    entry: dict[str, Any] = {
+        "original_value": result.original_text,
+        "status": result.status,
+    }
+
+    if result.normalized_concept is not None:
+        entry["normalized_value"] = result.normalized_concept
+
+    if result.confidence is not None:
+        entry["confidence"] = result.confidence
+
+    if result.method is not None:
+        entry["method"] = result.method
+
+    if result.candidates:
+        entry["candidates"] = [
+            {
+                "concept_id": candidate.concept_id,
+                "confidence": candidate.confidence,
+                "method": candidate.match_type,
+            }
+            for candidate in result.candidates[:3]
+        ]
+
+    return entry
+
+
+def _free_text_report_value(field_name: str, original_value: Any, results: list[Any]) -> Any:
+    """Return compact free-text harmonization details for an entity report."""
+    if isinstance(original_value, list):
+        return [_free_text_report_entry(result) for result in results]
+
+    if len(results) == 1:
+        return _free_text_report_entry(results[0])
+
+    return [_free_text_report_entry(result) for result in results]
+
 def _normalize_mapped_value(
     value: Any,
     source_unit: str | None,
@@ -385,6 +531,7 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
     for parsed_entity in parsed_document.entities:
         fields: dict[str, HarmonizedField] = {}
         unmapped_fields: list[RawField] = []
+        text_harmonization: dict[str, Any] = {}
         issues: list[HarmonizationIssue] = []
         preserved_relations = _build_preserved_relations(parsed_entity, scope)
         explicit_units = _collect_explicit_units(parsed_entity, scope_name)
@@ -461,6 +608,67 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
 
             value_confidence: float | None = None
             value_method: str | None = None
+
+            if canonical_field.role == "free_text_harmonization":
+                text_kind = _free_text_kind_for_path(canonical_field.path)
+                text_results = normalize_text_values(text_kind, value_for_normalization)
+                as_list = isinstance(value_for_normalization, list)
+                normalized_value = clean_text_normalization_value(text_results, as_list=as_list)
+                value_confidence, value_method, text_status = _free_text_summary(text_results)
+
+                # Clean data should contain the harmonized value directly in the
+                # original canonical field. If a free-text value cannot be mapped
+                # safely, clean_text_normalization_value preserves the original
+                # text instead of returning null. The detailed unresolved/ambiguous
+                # state remains visible in text_harmonization and issues.
+                field_status = "normalized" if text_status == "normalized" else "mapped"
+
+                fields[mapping.canonical_path] = HarmonizedField(
+                    canonical_path=mapping.canonical_path,
+                    original_label=parsed_field.label,
+                    original_value=original_value,
+                    normalized_value=normalized_value,
+                    status=field_status,
+                    confidence=mapping.confidence,
+                    field_confidence=mapping.confidence,
+                    value_confidence=value_confidence,
+                    field_method=field_method,
+                    value_method=value_method,
+                )
+
+                report_field_name = mapping.canonical_path.rsplit(".", maxsplit=1)[1]
+                text_harmonization[report_field_name] = _free_text_report_value(
+                    field_name=report_field_name,
+                    original_value=value_for_normalization,
+                    results=text_results,
+                )
+
+                issues.extend(
+                    _free_text_issues(
+                        results=text_results,
+                        entity_id=parsed_entity.entity_id,
+                        entity_type=parsed_entity.entity_type,
+                        field_label=parsed_field.label,
+                    )
+                )
+                continue
+
+            if canonical_field.role == "analysis_context":
+                # Context fields such as SecondaryValueStep.costEur are not value-harmonized.
+                # They are typed fields in the prototype model and are only preserved for
+                # later reporting/analytics. The harmonization layer recognizes the field
+                # label and passes the value through unchanged.
+                fields[mapping.canonical_path] = HarmonizedField(
+                    canonical_path=mapping.canonical_path,
+                    original_label=parsed_field.label,
+                    original_value=original_value,
+                    normalized_value=original_value,
+                    status="mapped",
+                    confidence=mapping.confidence,
+                    field_confidence=mapping.confidence,
+                    field_method=field_method,
+                )
+                continue
 
             try:
                 normalized_value, normalized_unit = _normalize_mapped_value(
@@ -590,6 +798,7 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
             fields=fields,
             relations=preserved_relations,
             unmapped_fields=unmapped_fields,
+            text_harmonization=text_harmonization,
             issues=issues,
         )
 
