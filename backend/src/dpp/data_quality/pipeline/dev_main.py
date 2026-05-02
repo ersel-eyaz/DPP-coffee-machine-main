@@ -41,6 +41,7 @@ EXAMPLES = {
     "unit_unsupported": ("product", "harmonization/unit_unsupported_input.json"),
     "enum_alias": ("emission", "harmonization/enum_alias_input.json"),
     "enum_fuzzy": ("emission", "harmonization/enum_fuzzy_input.json"),
+    "enum_semantic": ("emission", "harmonization/enum_semantic_input.json"),
     "mixed_dirty": ("product", "harmonization/mixed_dirty_input.json"),
 }
 

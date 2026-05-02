@@ -1,0 +1,36 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "activity-enum-semantic-001",
+      "@type": "dpp:ActivityData",
+      "dpp:measuredAmount": 125,
+      "dpp:activityUnit": "kWh",
+      "dpp:activity_type": "electrical energy used during production"
+    },
+    {
+      "@id": "factor-enum-semantic-001",
+      "@type": "dpp:EmissionFactor",
+      "dpp:co2Factor": 0.42,
+      "dpp:factorUnit": "kgCO2e/kWh"
+    },
+    {
+      "@id": "record-enum-semantic-001",
+      "@type": "dpp:GHGEmissionRecord",
+      "dpp:totalCarbon": {
+        "value": 52.5,
+        "unit": "kgCO2e"
+      },
+      "dpp:scope": "emissions from purchased electricity and heating",
+      "dpp:scope3_category": "raw materials and components bought from suppliers",
+      "dpp:activity": {
+        "@id": "activity-enum-semantic-001"
+      },
+      "dpp:emission_factor": {
+        "@id": "factor-enum-semantic-001"
+      }
+    }
+  ]
+}

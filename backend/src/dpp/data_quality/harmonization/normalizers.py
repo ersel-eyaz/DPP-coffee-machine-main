@@ -1,17 +1,24 @@
 """
 Unit and value normalization helpers for the harmonization layer.
 
-The module is intentionally conservative and rule-based. It supports exact unit
-aliases first and a small fuzzy fallback for obvious spelling variants. It also
-supports exact controlled-vocabulary alias normalization and a small fuzzy
-fallback for obvious controlled-vocabulary spelling variants. It does not use
-embeddings or semantic matching.
+The module is intentionally conservative in its automatic decisions. It supports
+exact unit aliases first and a small fuzzy fallback for obvious spelling variants.
+It also supports exact controlled-vocabulary alias normalization, a conservative
+fuzzy fallback for obvious controlled-vocabulary spelling variants, and an
+optional embedding-based semantic fallback for unresolved controlled-vocabulary
+values.
+
+The semantic fallback is lazy and optional: sentence-transformers is imported
+only when a semantic lookup is actually needed. Exact, alias, and fuzzy behavior
+therefore remains available without ML dependencies.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from functools import lru_cache
+from math import sqrt
 from typing import Any
 
 
@@ -24,6 +31,11 @@ AMBIGUOUS_UNIT_FUZZY_THRESHOLD = 0.80
 
 AUTO_ENUM_FUZZY_THRESHOLD = 0.95
 AMBIGUOUS_ENUM_FUZZY_THRESHOLD = 0.85
+
+AUTO_ENUM_SEMANTIC_THRESHOLD = 0.55
+AMBIGUOUS_ENUM_SEMANTIC_THRESHOLD = 0.42
+MIN_ENUM_SEMANTIC_MARGIN = 0.04
+DEFAULT_ENUM_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 @dataclass(frozen=True)
@@ -66,6 +78,18 @@ class EnumNormalizationCandidate:
     canonical_value: str
     confidence: float
     match_type: str
+
+
+@dataclass(frozen=True)
+class EnumSemanticProfile:
+    """Embedding support text for a canonical controlled-vocabulary value.
+
+    The text is used only for candidate ranking. Canonical output values still
+    come from the model's serialized enum values.
+    """
+
+    canonical_value: str
+    description: str
 
 
 def _to_float(value: Any) -> float:
@@ -347,6 +371,122 @@ _CONTROLLED_VOCABULARY_ALIASES: dict[str, dict[str, str]] = {
     },
 }
 
+# Semantic support texts for controlled-vocabulary values.
+#
+# Scope 3 category descriptions are derived from GHG Protocol Corporate Value
+# Chain (Scope 3) Accounting and Reporting Standard, chapter 5, especially
+# table 5.4 ("Description and boundaries of scope 3 categories"). The text is
+# intentionally compact because it is used as embedding input, not as a full
+# documentation source.
+_CONTROLLED_VOCABULARY_SEMANTIC_PROFILES: dict[str, dict[str, EnumSemanticProfile]] = {
+    "ActivityData.activity_type": {
+        "electricity_consumption": EnumSemanticProfile(
+            canonical_value="electricity_consumption",
+            description="electricity consumption; kilowatt-hours of electricity consumed; electrical energy use as activity data",
+        ),
+        "distance_traveled": EnumSemanticProfile(
+            canonical_value="distance_traveled",
+            description="distance traveled; kilometers of transport distance; movement by road rail sea or air as activity data",
+        ),
+        "material_purchase": EnumSemanticProfile(
+            canonical_value="material_purchase",
+            description="material purchase; kilograms of material consumed or acquired; purchased material amount as activity data",
+        ),
+        "water_usage": EnumSemanticProfile(
+            canonical_value="water_usage",
+            description="water usage; water consumption; cubic meters or liters of water used as activity data",
+        ),
+        "heat_usage": EnumSemanticProfile(
+            canonical_value="heat_usage",
+            description="heat usage; purchased or consumed heat energy; heating or thermal energy use as activity data",
+        ),
+        "waste_treatment": EnumSemanticProfile(
+            canonical_value="waste_treatment",
+            description="waste treatment; kilograms of waste generated; disposal treatment recycling incineration or wastewater treatment as activity data",
+        ),
+        "fuel_consumption": EnumSemanticProfile(
+            canonical_value="fuel_consumption",
+            description="fuel consumption; liters or kilograms of fuel consumed; fuel use by vehicles machines or processes as activity data",
+        ),
+    },
+    "GHGEmissionRecord.scope": {
+        "scope_1": EnumSemanticProfile(
+            canonical_value="scope_1",
+            description="direct greenhouse gas emissions from operations owned or controlled by the reporting company such as company facilities and vehicles",
+        ),
+        "scope_2": EnumSemanticProfile(
+            canonical_value="scope_2",
+            description="indirect greenhouse gas emissions from purchased or acquired electricity steam heating or cooling consumed by the reporting company",
+        ),
+        "scope_3": EnumSemanticProfile(
+            canonical_value="scope_3",
+            description="all other indirect greenhouse gas emissions in the reporting company's upstream and downstream value chain",
+        ),
+    },
+    "GHGEmissionRecord.scope3_category": {
+        "purchased_goods_and_services": EnumSemanticProfile(
+            canonical_value="purchased_goods_and_services",
+            description="purchased goods and services; extraction production and transportation of goods and services purchased or acquired in the reporting year; upstream cradle-to-gate emissions",
+        ),
+        "capital_goods": EnumSemanticProfile(
+            canonical_value="capital_goods",
+            description="capital goods; extraction production and transportation of capital goods purchased or acquired in the reporting year; equipment machinery buildings facilities and vehicles",
+        ),
+        "fuel_and_energy_related_activities": EnumSemanticProfile(
+            canonical_value="fuel_and_energy_related_activities",
+            description="fuel and energy related activities not included in scope 1 or scope 2; upstream emissions of purchased fuels and purchased electricity; transmission and distribution losses",
+        ),
+        "upstream_transportation_and_distribution": EnumSemanticProfile(
+            canonical_value="upstream_transportation_and_distribution",
+            description="upstream transportation and distribution; transportation and distribution of purchased products between tier 1 suppliers and own operations; purchased inbound outbound and internal third-party logistics",
+        ),
+        "waste_generated_in_operations": EnumSemanticProfile(
+            canonical_value="waste_generated_in_operations",
+            description="waste generated in operations; third-party disposal and treatment of waste from owned or controlled operations; solid waste wastewater landfill recycling incineration composting",
+        ),
+        "business_travel": EnumSemanticProfile(
+            canonical_value="business_travel",
+            description="business travel; transportation of employees for business-related activities in third-party vehicles such as aircraft trains buses rental cars or passenger cars",
+        ),
+        "employee_commuting": EnumSemanticProfile(
+            canonical_value="employee_commuting",
+            description="employee commuting; transportation of employees between homes and worksites; automobile bus rail air travel and optional teleworking",
+        ),
+        "upstream_leased_assets": EnumSemanticProfile(
+            canonical_value="upstream_leased_assets",
+            description="upstream leased assets; operation of assets leased by the reporting company as lessee not included in scope 1 or scope 2",
+        ),
+        "downstream_transportation_and_distribution": EnumSemanticProfile(
+            canonical_value="downstream_transportation_and_distribution",
+            description="downstream transportation and distribution; transportation distribution retail and storage of sold products between the reporting company's operations and the end consumer when not paid for by the reporting company",
+        ),
+        "processing_of_sold_products": EnumSemanticProfile(
+            canonical_value="processing_of_sold_products",
+            description="processing of sold products; processing of sold intermediate products by downstream companies after sale before use by the end consumer",
+        ),
+        "use_of_sold_products": EnumSemanticProfile(
+            canonical_value="use_of_sold_products",
+            description="use of sold products; end use of goods and services sold in the reporting year; direct use-phase emissions over expected lifetime from products consuming energy fuels feedstocks or emitting greenhouse gases",
+        ),
+        "end_of_life_treatment": EnumSemanticProfile(
+            canonical_value="end_of_life_treatment",
+            description="end-of-life treatment of sold products; waste disposal and treatment of sold products at the end of their life such as landfill incineration recycling or wastewater treatment",
+        ),
+        "downstream_leased_assets": EnumSemanticProfile(
+            canonical_value="downstream_leased_assets",
+            description="downstream leased assets; operation of assets owned by the reporting company as lessor and leased to other entities not included in scope 1 or scope 2",
+        ),
+        "franchises": EnumSemanticProfile(
+            canonical_value="franchises",
+            description="franchises; operation of franchises in the reporting year not included in scope 1 or scope 2; emissions of franchisees reported by franchisor",
+        ),
+        "investments": EnumSemanticProfile(
+            canonical_value="investments",
+            description="investments; operation of investments including equity debt investments and project finance in the reporting year not included in scope 1 or scope 2",
+        ),
+    },
+}
+
 def _normalize_enum_key(value: str) -> str:
     """Normalize a controlled-vocabulary value for canonical and alias lookup."""
     normalized = value.strip().lower().replace("_", " ").replace("-", " ")
@@ -421,23 +561,137 @@ def find_enum_value_candidates(
     return sorted(candidates_by_value.values(), key=lambda item: item.confidence, reverse=True)
 
 
+@lru_cache(maxsize=1)
+def _embedding_model() -> Any:
+    """Load the optional sentence-transformers model lazily."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise NormalizationError(
+            "Semantic controlled-vocabulary matching requires the optional "
+            "'sentence-transformers' package. Install it or keep the value as a "
+            "canonical/alias/fuzzy-resolvable enum value."
+        ) from exc
+
+    try:
+        return SentenceTransformer(DEFAULT_ENUM_EMBEDDING_MODEL)
+    except Exception as exc:
+        raise NormalizationError(
+            "Could not load the sentence-transformers model "
+            f"{DEFAULT_ENUM_EMBEDDING_MODEL!r}. Check the local model cache or internet access."
+        ) from exc
+
+
+def _as_vector(embedding: Any) -> list[float]:
+    """Convert model output to a plain Python vector."""
+    if hasattr(embedding, "tolist"):
+        values = embedding.tolist()
+    else:
+        values = embedding
+
+    return [float(item) for item in values]
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    """Return cosine similarity for two embedding vectors."""
+    dot_product = sum(a * b for a, b in zip(left, right))
+    left_norm = sqrt(sum(a * a for a in left))
+    right_norm = sqrt(sum(b * b for b in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+
+    return dot_product / (left_norm * right_norm)
+
+
+@lru_cache(maxsize=64)
+def _semantic_profile_embeddings(canonical_path: str) -> tuple[tuple[str, str, tuple[float, ...]], ...]:
+    """Return cached embeddings for the semantic profiles of one controlled field."""
+    profiles = _CONTROLLED_VOCABULARY_SEMANTIC_PROFILES.get(canonical_path, {})
+    if not profiles:
+        return ()
+
+    model = _embedding_model()
+    profile_items = list(profiles.values())
+    texts = [profile.description for profile in profile_items]
+    embeddings = model.encode(texts, normalize_embeddings=True)
+
+    result: list[tuple[str, str, tuple[float, ...]]] = []
+    for profile, embedding in zip(profile_items, embeddings):
+        result.append((profile.canonical_value, profile.description, tuple(_as_vector(embedding))))
+
+    return tuple(result)
+
+
+def find_enum_semantic_candidates(
+    canonical_path: str,
+    value: Any,
+    min_confidence: float = AMBIGUOUS_ENUM_SEMANTIC_THRESHOLD,
+) -> list[EnumNormalizationCandidate]:
+    """Find semantic candidates for an unresolved controlled-vocabulary value."""
+    if not isinstance(value, str):
+        return []
+
+    text = " ".join(value.strip().split())
+    if not text:
+        return []
+
+    profile_embeddings = _semantic_profile_embeddings(canonical_path)
+    if not profile_embeddings:
+        return []
+
+    model = _embedding_model()
+    query_vector = _as_vector(model.encode(text, normalize_embeddings=True))
+
+    candidates: list[EnumNormalizationCandidate] = []
+    for canonical_value, _description, profile_vector_tuple in profile_embeddings:
+        score = _cosine_similarity(query_vector, list(profile_vector_tuple))
+        if score < min_confidence:
+            continue
+
+        candidates.append(
+            EnumNormalizationCandidate(
+                original_value=value,
+                canonical_value=canonical_value,
+                confidence=score,
+                match_type="semantic",
+            )
+        )
+
+    return sorted(candidates, key=lambda item: item.confidence, reverse=True)
+
+
 def resolve_enum_value(
     canonical_path: str,
     value: Any,
     auto_threshold: float = AUTO_ENUM_FUZZY_THRESHOLD,
+    semantic_threshold: float = AUTO_ENUM_SEMANTIC_THRESHOLD,
+    enable_semantic: bool = True,
 ) -> EnumNormalizationCandidate | None:
-    """Resolve a controlled-vocabulary value by canonical match, alias, or conservative fuzzy fallback."""
+    """Resolve a controlled-vocabulary value by canonical, alias, fuzzy, or semantic matching."""
     candidates = find_enum_value_candidates(canonical_path, value)
-    if not candidates:
+    if candidates:
+        top = candidates[0]
+        if top.match_type in {"canonical", "alias"}:
+            return top
+
+        second_score = candidates[1].confidence if len(candidates) > 1 else 0.0
+        if top.confidence >= auto_threshold and (top.confidence - second_score) >= 0.05:
+            return top
+
+    if not enable_semantic:
         return None
 
-    top = candidates[0]
-    if top.match_type in {"canonical", "alias"}:
-        return top
+    semantic_candidates = find_enum_semantic_candidates(canonical_path, value)
+    if not semantic_candidates:
+        return None
 
-    second_score = candidates[1].confidence if len(candidates) > 1 else 0.0
-    if top.confidence >= auto_threshold and (top.confidence - second_score) >= 0.05:
-        return top
+    top_semantic = semantic_candidates[0]
+    second_semantic_score = semantic_candidates[1].confidence if len(semantic_candidates) > 1 else 0.0
+    if (
+        top_semantic.confidence >= semantic_threshold
+        and (top_semantic.confidence - second_semantic_score) >= MIN_ENUM_SEMANTIC_MARGIN
+    ):
+        return top_semantic
 
     return None
 
@@ -455,9 +709,12 @@ def normalize_enum_value(canonical_path: str, value: Any) -> str:
         return candidate.canonical_value
 
     candidates = find_enum_value_candidates(canonical_path, value)
+    if not candidates:
+        candidates = find_enum_semantic_candidates(canonical_path, value)
+
     if candidates:
         candidate_text = ", ".join(
-            f"{candidate.canonical_value} ({candidate.confidence:.2f})"
+            f"{candidate.canonical_value} ({candidate.confidence:.2f}, {candidate.match_type})"
             for candidate in candidates[:3]
         )
         raise NormalizationError(

@@ -512,6 +512,21 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                         )
                     )
 
+                if enum_candidate is not None and enum_candidate.match_type == "semantic":
+                    issues.append(
+                        HarmonizationIssue(
+                            severity="info",
+                            message=(
+                                f"Controlled-vocabulary value {enum_candidate.original_value!r} was resolved "
+                                f"by semantic embedding match to {enum_candidate.canonical_value!r} "
+                                f"with confidence {enum_candidate.confidence:.2f}."
+                            ),
+                            entity_id=parsed_entity.entity_id,
+                            entity_type=parsed_entity.entity_type,
+                            field_label=parsed_field.label,
+                        )
+                    )
+
                 unit_label, unit_candidate = _get_unit_candidate_for_trace(
                     original_value=original_value,
                     original_unit=original_unit,
