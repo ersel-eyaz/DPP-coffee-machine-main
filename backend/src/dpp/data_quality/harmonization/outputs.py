@@ -300,7 +300,7 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
         "scope_name": result.scope_name,
         "summary": _build_report_summary(result, report_entities),
         "entities": report_entities,
-        "issues": [_drop_none_values(asdict(issue)) for issue in result.issues],
+        "global_issues": [_drop_none_values(asdict(issue)) for issue in result.issues],
     }
 
 

@@ -45,6 +45,7 @@ EXAMPLES = {
     "enum_semantic": ("emission", "harmonization/enum_semantic_input.json"),
     "mixed_dirty": ("product", "harmonization/mixed_dirty_input.json"),
     "service_text": ("service", "harmonization/service_text_input.json"),
+    "service_semantic": ("service", "harmonization/service_semantic_input.json"),
 }
 
 

@@ -1,0 +1,37 @@
+{
+  "@context": {
+    "dpp": "https://example.com/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "service-semantic-replace-001",
+      "@type": "dpp:ReplaceServiceStep",
+      "diagnose": "the grinder blades are no longer sharp",
+      "observedSymptoms": [
+        "coffee extraction is uneven and watery",
+        "the ground coffee particles vary a lot from cup to cup"
+      ],
+      "costEur": 64.0
+    },
+    {
+      "@id": "service-semantic-cleaning-001",
+      "@type": "dpp:CleaningServiceStep",
+      "diagnose": "mineral deposits have accumulated in the water circuit",
+      "observedSymptoms": [
+        "the machine spits steam and water flow is weak",
+        "the pump sounds strained while priming"
+      ],
+      "costEur": 31.0
+    },
+    {
+      "@id": "service-semantic-repair-001",
+      "@type": "dpp:RepairServiceStep",
+      "diagnose": "the rubber gasket no longer seals the water path",
+      "observedSymptoms": [
+        "liquid escapes around the valve after brewing",
+        "brew pressure drops and rises unexpectedly"
+      ],
+      "costEur": 86.0
+    }
+  ]
+}
