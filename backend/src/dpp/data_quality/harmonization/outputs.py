@@ -200,6 +200,71 @@ def build_clean_jsonld(result: HarmonizationResult, document: dict[str, Any] | N
     }
 
 
+
+def _iter_text_harmonization_entries(value: Any) -> list[dict[str, Any]]:
+    """Return flat free-text harmonization entries from an entity report section."""
+    entries: list[dict[str, Any]] = []
+
+    if isinstance(value, dict):
+        if "status" in value and "original_value" in value:
+            entries.append(value)
+        else:
+            for item in value.values():
+                entries.extend(_iter_text_harmonization_entries(item))
+        return entries
+
+    if isinstance(value, list):
+        for item in value:
+            entries.extend(_iter_text_harmonization_entries(item))
+
+    return entries
+
+
+def _build_report_summary(result: HarmonizationResult, report_entities: dict[str, Any]) -> dict[str, Any]:
+    """Build compact counts for global and entity-level report content.
+
+    The detailed issue lists stay in their original locations. This summary only
+    makes it visible at report level that entity-level infos/warnings/errors exist,
+    even when there are no global pipeline issues.
+    """
+    entity_issues = [
+        issue
+        for entity in result.entities.values()
+        for issue in entity.issues
+    ]
+    all_issues = [*result.issues, *entity_issues]
+
+    field_status_counts: dict[str, int] = {}
+    for entity in result.entities.values():
+        for field in entity.fields.values():
+            field_status_counts[field.status] = field_status_counts.get(field.status, 0) + 1
+
+    text_status_counts: dict[str, int] = {}
+    for entity_dict in report_entities.values():
+        for entry in _iter_text_harmonization_entries(entity_dict.get("text_harmonization", {})):
+            status = entry.get("status")
+            if isinstance(status, str):
+                text_status_counts[status] = text_status_counts.get(status, 0) + 1
+
+    severity_counts = {
+        "info": sum(1 for issue in all_issues if issue.severity == "info"),
+        "warning": sum(1 for issue in all_issues if issue.severity == "warning"),
+        "error": sum(1 for issue in all_issues if issue.severity == "error"),
+    }
+
+    return {
+        "entities_total": len(result.entities),
+        "fields_total": sum(len(entity.fields) for entity in result.entities.values()),
+        "unmapped_fields_total": sum(len(entity.unmapped_fields) for entity in result.entities.values()),
+        "field_status_counts": field_status_counts,
+        "text_harmonization_status_counts": text_status_counts,
+        "issues_total": len(all_issues),
+        "global_issues_total": len(result.issues),
+        "entity_issues_total": len(entity_issues),
+        "issue_severity_counts": severity_counts,
+        "has_errors": result.has_errors(),
+    }
+
 def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
     """
     Build a traceability report from a harmonization result.
@@ -233,6 +298,7 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
 
     return {
         "scope_name": result.scope_name,
+        "summary": _build_report_summary(result, report_entities),
         "entities": report_entities,
         "issues": [_drop_none_values(asdict(issue)) for issue in result.issues],
     }
