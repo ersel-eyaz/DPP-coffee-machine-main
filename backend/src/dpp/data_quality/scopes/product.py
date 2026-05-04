@@ -25,6 +25,7 @@ PRODUCT_SCOPE = ScopeDefinition(
         "DPPInstance",
         "PartStatic",
         "PartInstance",
+        "MaterialStatic"
         "MaterialInstance",
     ),
     fields=(
