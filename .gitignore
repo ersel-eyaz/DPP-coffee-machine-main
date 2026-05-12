@@ -324,3 +324,7 @@ Pipfile.lock
 .ngrok-host
 
 NUL
+
+# Local Codex/thesis working context
+AGENTS.md
+docs/thesis_context/
