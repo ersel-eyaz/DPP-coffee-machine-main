@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
 
 
@@ -25,15 +26,6 @@ def _context_from_document(document: dict[str, Any]) -> Any:
 def _field_name_from_path(canonical_path: str) -> str:
     """Return the field name from a canonical path such as 'ActivityData.quantity'."""
     return canonical_path.split(".", maxsplit=1)[1]
-
-
-def _clean_value(field_dict: dict[str, Any]) -> Any:
-    """Return the value that should appear in clean canonical data."""
-    normalized_value = field_dict.get("normalized_value")
-    if normalized_value is not None:
-        return normalized_value
-
-    return field_dict.get("original_value")
 
 
 def _drop_none_values(value: Any) -> Any:
@@ -189,7 +181,7 @@ def build_clean_jsonld(result: HarmonizationResult, document: dict[str, Any] | N
                 continue
 
             field_name = _field_name_from_path(canonical_path)
-            node[field_name] = _clean_value(asdict(harmonized_field))
+            node[field_name] = effective_field_value(harmonized_field)
 
         _add_preserved_references(node, entity)
         graph.append(node)

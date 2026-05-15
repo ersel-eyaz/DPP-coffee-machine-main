@@ -10,6 +10,7 @@ Usage:
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main label_fuzzy_candidate
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output data
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output report
+    PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output anomaly
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main service_text --output full
 """
 
@@ -20,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from dpp.data_quality.anomaly.outputs import build_anomaly_report
+from dpp.data_quality.anomaly.services import analyze_harmonization_result
 from dpp.data_quality.harmonization.outputs import (
     build_clean_jsonld,
     build_full_output,
@@ -29,13 +32,14 @@ from dpp.data_quality.harmonization.services import harmonize_document
 
 
 EXAMPLES = {
-    "product": ("product", "product_dirty.json"),
-    "emission": ("emission", "emission_dirty.json"),
+    "product": ("product", "harmonization/product_dirty.json"),
+    "emission": ("emission", "harmonization/emission_dirty.json"),
 
     # Controlled scenario examples.
     "label_exact_alias": ("product", "harmonization/label_exact_alias_input.json"),
     "label_fuzzy_candidate": ("product", "harmonization/label_fuzzy_candidate_input.json"),
     "label_ambiguous": ("product", "harmonization/label_ambiguous_input.json"),
+    "product_profile": ("product", "harmonization/product_profile_input.json"),
     "unit_exact_alias": ("product", "harmonization/unit_exact_alias_input.json"),
     "unit_fuzzy_candidate": ("product", "harmonization/unit_fuzzy_candidate_input.json"),
     "unit_ambiguous": ("emission", "harmonization/unit_ambiguous_input.json"),
@@ -43,6 +47,7 @@ EXAMPLES = {
     "enum_alias": ("emission", "harmonization/enum_alias_input.json"),
     "enum_fuzzy": ("emission", "harmonization/enum_fuzzy_input.json"),
     "enum_semantic": ("emission", "harmonization/enum_semantic_input.json"),
+    "emission_anomaly": ("emission", "harmonization/emission_anomaly_input.json"),
     "mixed_dirty": ("product", "harmonization/mixed_dirty_input.json"),
     "service_text": ("service", "harmonization/service_text_input.json"),
     "service_semantic": ("service", "harmonization/service_semantic_input.json"),
@@ -76,10 +81,10 @@ def _parse_output_mode(args: list[str]) -> str:
     try:
         output_mode = args[index + 1]
     except IndexError as exc:
-        raise ValueError("--output requires one of: data, report, full") from exc
+        raise ValueError("--output requires one of: data, report, anomaly, full") from exc
 
-    if output_mode not in {"data", "report", "full"}:
-        raise ValueError("--output requires one of: data, report, full")
+    if output_mode not in {"data", "report", "anomaly", "full"}:
+        raise ValueError("--output requires one of: data, report, anomaly, full")
 
     return output_mode
 
@@ -99,6 +104,12 @@ def main() -> None:
         payload = {
             "report": build_harmonization_report(result),
             "has_errors": result.has_errors(),
+        }
+    elif output_mode == "anomaly":
+        anomaly_result = analyze_harmonization_result(result)
+        payload = {
+            "report": build_anomaly_report(anomaly_result),
+            "has_errors": anomaly_result.has_errors(),
         }
     else:
         payload = build_full_output(result, document=document)

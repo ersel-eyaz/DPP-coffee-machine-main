@@ -1,0 +1,29 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-baristacore-profile-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:name": "BaristaCore 2500",
+      "dpp:productClass": "Automatic coffee machine",
+      "dpp:productWeight": {
+        "value": 13.5,
+        "unit": "kg"
+      },
+      "dpp:productHeight": {
+        "value": 45.0,
+        "unit": "cm"
+      },
+      "dpp:productWidth": {
+        "value": 35.0,
+        "unit": "cm"
+      },
+      "dpp:productDepth": {
+        "value": 40.0,
+        "unit": "cm"
+      }
+    }
+  ]
+}

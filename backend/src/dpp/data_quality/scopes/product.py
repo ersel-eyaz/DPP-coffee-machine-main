@@ -25,10 +25,24 @@ PRODUCT_SCOPE = ScopeDefinition(
         "DPPInstance",
         "PartStatic",
         "PartInstance",
-        "MaterialStatic"
+        "MaterialStatic",
         "MaterialInstance",
     ),
     fields=(
+        # DPPStatic identity/context fields used by optional product profiles.
+        CanonicalField(
+            entity_type="DPPStatic",
+            field_name="name",
+            role="analysis_context",
+            description="Product model name used to select optional plausibility profiles.",
+        ),
+        CanonicalField(
+            entity_type="DPPStatic",
+            field_name="productClass",
+            role="analysis_context",
+            description="Product class used as broad context for plausibility checks.",
+        ),
+
         # DPPStatic physical fields
         CanonicalField(
             entity_type="DPPStatic",

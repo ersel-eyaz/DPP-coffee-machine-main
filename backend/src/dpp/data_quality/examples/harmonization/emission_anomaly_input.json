@@ -1,0 +1,68 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "activity-negative-001",
+      "@type": "dpp:ActivityData",
+      "dpp:quantity": {
+        "value": -10,
+        "unit": "km"
+      },
+      "dpp:unit": "km"
+    },
+    {
+      "@id": "factor-valid-001",
+      "@type": "dpp:EmissionFactor",
+      "dpp:value": 0.1,
+      "dpp:unit": "kgCO2e/km"
+    },
+    {
+      "@id": "record-scope3-missing-category-001",
+      "@type": "dpp:GHGEmissionRecord",
+      "dpp:emissions_kg_co2e": {
+        "value": -1,
+        "unit": "kgCO2e"
+      },
+      "dpp:scope": "scope 3",
+      "dpp:activity": {
+        "@id": "activity-negative-001"
+      },
+      "dpp:emission_factor": {
+        "@id": "factor-valid-001"
+      }
+    },
+    {
+      "@id": "activity-valid-001",
+      "@type": "dpp:ActivityData",
+      "dpp:quantity": {
+        "value": 25,
+        "unit": "km"
+      },
+      "dpp:unit": "km"
+    },
+    {
+      "@id": "factor-negative-001",
+      "@type": "dpp:EmissionFactor",
+      "dpp:value": -0.2,
+      "dpp:unit": "kgCO2e/km"
+    },
+    {
+      "@id": "record-scope1-with-category-001",
+      "@type": "dpp:GHGEmissionRecord",
+      "dpp:emissions_kg_co2e": {
+        "value": 5,
+        "unit": "kgCO2e"
+      },
+      "dpp:scope": "scope 1",
+      "dpp:scope3_category": "purchased goods and services",
+      "dpp:activity": {
+        "@id": "activity-valid-001"
+      },
+      "dpp:emission_factor": {
+        "@id": "factor-negative-001"
+      }
+    }
+  ]
+}
