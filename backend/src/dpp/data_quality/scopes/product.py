@@ -208,6 +208,13 @@ PRODUCT_SCOPE = ScopeDefinition(
         ),
         CanonicalRelation(
             source_entity_type="PartInstance",
+            relation_name="historyOfDetachedParts",
+            target_entity_type="PartInstance",
+            is_collection=True,
+            description="Preserves detached part history separately from the active part tree.",
+        ),
+        CanonicalRelation(
+            source_entity_type="PartInstance",
             relation_name="compositeMaterials",
             target_entity_type="MaterialInstance",
             is_collection=True,

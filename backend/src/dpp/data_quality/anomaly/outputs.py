@@ -16,13 +16,18 @@ def _build_summary(result: AnomalyResult) -> dict[str, Any]:
         "error": sum(1 for finding in result.findings if finding.severity == "error"),
     }
     category_counts: dict[str, int] = {}
+    check_method_counts: dict[str, int] = {}
     for finding in result.findings:
         category_counts[finding.category] = category_counts.get(finding.category, 0) + 1
+        check_method = finding.evidence.get("check_method", "rule_based")
+        if isinstance(check_method, str):
+            check_method_counts[check_method] = check_method_counts.get(check_method, 0) + 1
 
     return {
         "findings_total": len(result.findings),
         "severity_counts": severity_counts,
         "category_counts": category_counts,
+        "check_method_counts": check_method_counts,
         "has_errors": result.has_errors(),
     }
 

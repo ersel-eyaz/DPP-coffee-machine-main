@@ -182,6 +182,236 @@ def _first_entity_by_type(result: HarmonizationResult, entity_type: str) -> Harm
     return None
 
 
+def _single_relation_target(entity: HarmonizedEntity, relation_name: str) -> str | None:
+    """Return the first preserved relation target id for a relation."""
+    targets = _relation_targets(entity, relation_name)
+    return targets[0] if targets else None
+
+
+def _part_static_weight(result: HarmonizationResult, part_instance: HarmonizedEntity) -> tuple[str | None, float | None]:
+    """Return the linked PartStatic id and weight for one PartInstance."""
+    part_static_id = _single_relation_target(part_instance, "partStaticLink")
+    if part_static_id is None:
+        return None, None
+
+    part_static = result.entities.get(part_static_id)
+    if part_static is None:
+        return part_static_id, None
+
+    return part_static_id, _numeric_field_value(part_static, "PartStatic.weightGRM")
+
+
+def _active_part_tree_weight_summary(
+    result: HarmonizationResult,
+    root_part_id: str,
+) -> dict[str, Any]:
+    """
+    Summarize active leaf-part weights below a root PartInstance.
+
+    Only `compositeParts` are treated as the current active structure.
+    `historyOfDetachedParts` is preserved as history and reported as excluded
+    evidence, but it is not traversed into the current product total.
+    """
+    visited: set[str] = set()
+    cycle_part_ids: set[str] = set()
+    missing_part_ids: set[str] = set()
+    detached_part_ids: set[str] = set()
+    leaf_part_ids: list[str] = []
+    leaf_static_ids: list[str] = []
+    leaf_weights: list[float] = []
+    missing_weight_part_ids: list[str] = []
+
+    def walk(part_id: str) -> None:
+        if part_id in visited:
+            cycle_part_ids.add(part_id)
+            return
+
+        visited.add(part_id)
+        entity = result.entities.get(part_id)
+        if entity is None or entity.entity_type != "PartInstance":
+            missing_part_ids.add(part_id)
+            return
+
+        detached_part_ids.update(_relation_targets(entity, "historyOfDetachedParts"))
+        child_ids = _relation_targets(entity, "compositeParts")
+        if child_ids:
+            for child_id in child_ids:
+                walk(child_id)
+            return
+
+        leaf_part_ids.append(part_id)
+        part_static_id, weight = _part_static_weight(result, entity)
+        if part_static_id is not None:
+            leaf_static_ids.append(part_static_id)
+        if weight is None:
+            missing_weight_part_ids.append(part_id)
+            return
+        leaf_weights.append(weight)
+
+    walk(root_part_id)
+    return {
+        "total_weight": sum(leaf_weights),
+        "leaf_part_ids": leaf_part_ids,
+        "leaf_static_ids": leaf_static_ids,
+        "leaf_weights": leaf_weights,
+        "visited_part_ids": sorted(visited),
+        "detached_part_ids_excluded": sorted(detached_part_ids),
+        "missing_part_ids": sorted(missing_part_ids),
+        "cycle_part_ids": sorted(cycle_part_ids),
+        "missing_weight_part_ids": missing_weight_part_ids,
+    }
+
+
+def _apply_active_part_tree_weight_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
+    """Compare active leaf-part tree weight with the linked product weight."""
+    findings: list[AnomalyFinding] = []
+
+    for dpp_instance in [entity for entity in result.entities.values() if entity.entity_type == "DPPInstance"]:
+        dpp_static_id = _single_relation_target(dpp_instance, "dppStaticLink")
+        root_part_id = _single_relation_target(dpp_instance, "partInstanceLink")
+        if dpp_static_id is None or root_part_id is None:
+            continue
+
+        dpp_static = result.entities.get(dpp_static_id)
+        if dpp_static is None:
+            continue
+
+        product_weight = _numeric_field_value(dpp_static, "DPPStatic.weightGRM")
+        if product_weight is None:
+            continue
+
+        summary = _active_part_tree_weight_summary(result, root_part_id)
+        active_total = float(summary["total_weight"])
+        if active_total <= 0 or active_total <= product_weight * 1.05:
+            continue
+
+        findings.append(
+            AnomalyFinding(
+                check_id="active_part_tree_weight_exceeds_product_weight",
+                category="consistency",
+                severity="warning",
+                message="Active leaf-part tree weight is greater than the linked product weight.",
+                entity_id=dpp_instance.entity_id,
+                entity_type=dpp_instance.entity_type,
+                relation_path="DPPInstance.partInstanceLink",
+                observed_value=active_total,
+                expected={"max_approx": product_weight, "tolerance_factor": 1.05},
+                evidence={
+                    "product_entity_id": dpp_static.entity_id,
+                    "root_part_instance_id": root_part_id,
+                    "aggregation_scope": "active_leaf_part_instances_reachable_via_compositeParts",
+                    "leaf_part_ids": summary["leaf_part_ids"],
+                    "leaf_static_ids": summary["leaf_static_ids"],
+                    "leaf_weightsGRM": summary["leaf_weights"],
+                    "detached_part_ids_excluded": summary["detached_part_ids_excluded"],
+                    "missing_part_ids": summary["missing_part_ids"],
+                    "cycle_part_ids": summary["cycle_part_ids"],
+                    "missing_weight_part_ids": summary["missing_weight_part_ids"],
+                },
+                review_action="verify_active_part_tree_or_product_weight",
+            )
+        )
+
+    return findings
+
+
+def _ratio_finding(
+    *,
+    check_id: str,
+    message: str,
+    entity: HarmonizedEntity,
+    field_path: str,
+    observed_value: float,
+    expected: Any,
+    evidence: dict[str, Any] | None = None,
+    severity: str = "warning",
+    review_action: str = "verify_usage_counter_ratio",
+) -> AnomalyFinding:
+    """Build a usage-ratio consistency finding."""
+    return AnomalyFinding(
+        check_id=check_id,
+        category="consistency",
+        severity=severity,  # type: ignore[arg-type]
+        message=message,
+        entity_id=entity.entity_id,
+        entity_type=entity.entity_type,
+        field_path=field_path,
+        observed_value=observed_value,
+        expected=expected,
+        evidence=evidence or {},
+        review_action=review_action,
+    )
+
+
+def _apply_product_usage_ratio_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
+    """Apply broad plausibility ratios for product usage counters."""
+    findings: list[AnomalyFinding] = []
+
+    for dpp_instance in [entity for entity in result.entities.values() if entity.entity_type == "DPPInstance"]:
+        operating = _numeric_field_value(dpp_instance, "DPPInstance.operatingHRS")
+        brewing = _numeric_field_value(dpp_instance, "DPPInstance.brewingCount")
+        cleaning = _numeric_field_value(dpp_instance, "DPPInstance.cleaningCount")
+        chalk = _numeric_field_value(dpp_instance, "DPPInstance.chalkCount")
+
+        if operating is not None and brewing is not None:
+            if operating <= 0 < brewing:
+                findings.append(
+                    _ratio_finding(
+                        check_id="brewing_count_without_operating_hours",
+                        message="DPPInstance.brewingCount is positive while operating hours are zero.",
+                        entity=dpp_instance,
+                        field_path="DPPInstance.brewingCount",
+                        observed_value=brewing,
+                        expected={"operatingHRS": "> 0"},
+                        review_action="verify_operating_hours_or_brewing_counter",
+                    )
+                )
+            elif operating > 0:
+                brews_per_hour = brewing / operating
+                if brews_per_hour > 20.0:
+                    findings.append(
+                        _ratio_finding(
+                            check_id="brewing_per_operating_hour_high",
+                            message="Brewing count per operating hour is unusually high.",
+                            entity=dpp_instance,
+                            field_path="DPPInstance.brewingCount",
+                            observed_value=round(brews_per_hour, 3),
+                            expected={"max_brews_per_operating_hour": 20.0},
+                            evidence={"brewingCount": brewing, "operatingHRS": operating},
+                            severity="info",
+                            review_action="verify_usage_counter_semantics",
+                        )
+                    )
+
+        if brewing is None or brewing <= 0:
+            continue
+
+        for field_path, counter, max_ratio in (
+            ("DPPInstance.cleaningCount", cleaning, 0.2),
+            ("DPPInstance.chalkCount", chalk, 0.2),
+        ):
+            if counter is None:
+                continue
+            ratio = counter / brewing
+            if ratio <= max_ratio:
+                continue
+            findings.append(
+                _ratio_finding(
+                    check_id="maintenance_to_brewing_ratio_high",
+                    message=f"{field_path} is unusually high relative to DPPInstance.brewingCount.",
+                    entity=dpp_instance,
+                    field_path=field_path,
+                    observed_value=round(ratio, 3),
+                    expected={"max_ratio_to_brewingCount": max_ratio},
+                    evidence={"counter_value": counter, "brewingCount": brewing},
+                    severity="info",
+                    review_action="verify_maintenance_schedule_or_counter_semantics",
+                )
+            )
+
+    return findings
+
+
 def _apply_product_consistency_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
     """Apply cross-field and cross-entity checks for product-scope data."""
     findings: list[AnomalyFinding] = []
@@ -529,7 +759,9 @@ def analyze_harmonization_result(result: HarmonizationResult) -> AnomalyResult:
     if result.scope_name == "product":
         findings.extend(_apply_numeric_range_rules(result, PRODUCT_NUMERIC_RANGE_RULES))
         findings.extend(_apply_product_profile_checks(result))
+        findings.extend(_apply_active_part_tree_weight_checks(result))
         findings.extend(_apply_product_consistency_checks(result))
+        findings.extend(_apply_product_usage_ratio_checks(result))
     elif result.scope_name == "emission":
         findings.extend(_apply_numeric_range_rules(result, EMISSION_NUMERIC_RANGE_RULES))
         findings.extend(_apply_emission_calculation_checks(result))

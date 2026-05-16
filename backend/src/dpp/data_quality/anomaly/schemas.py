@@ -19,6 +19,7 @@ FindingCategory = Literal[
     "calculation",
     "semantic",
     "review",
+    "statistical",
 ]
 
 
@@ -40,7 +41,9 @@ class AnomalyFinding:
         expected: Compact expectation, threshold, range, or formula.
         confidence: Optional confidence score when the check includes a
             non-deterministic or heuristic scoring step.
-        evidence: Additional trace context for reports.
+        evidence: Additional trace context for reports. Statistical or ML-based
+            checks should store model/method identifiers, feature names, scores,
+            and thresholds here so the public report contract remains stable.
         review_action: Suggested human/expert review action.
     """
 

@@ -11,7 +11,9 @@ Usage:
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output data
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output report
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output anomaly
+    PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission_anomaly --output quality
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main service_text --output full
+    PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main --scope product --input path/to/input.json --output quality
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ EXAMPLES = {
     "label_exact_alias": ("product", "harmonization/label_exact_alias_input.json"),
     "label_fuzzy_candidate": ("product", "harmonization/label_fuzzy_candidate_input.json"),
     "label_ambiguous": ("product", "harmonization/label_ambiguous_input.json"),
+    "product_anomaly": ("product", "harmonization/product_anomaly_input.json"),
     "product_profile": ("product", "harmonization/product_profile_input.json"),
     "unit_exact_alias": ("product", "harmonization/unit_exact_alias_input.json"),
     "unit_fuzzy_candidate": ("product", "harmonization/unit_fuzzy_candidate_input.json"),
@@ -49,6 +52,7 @@ EXAMPLES = {
     "enum_semantic": ("emission", "harmonization/enum_semantic_input.json"),
     "emission_anomaly": ("emission", "harmonization/emission_anomaly_input.json"),
     "mixed_dirty": ("product", "harmonization/mixed_dirty_input.json"),
+    "service_anomaly": ("service", "harmonization/service_anomaly_input.json"),
     "service_text": ("service", "harmonization/service_text_input.json"),
     "service_semantic": ("service", "harmonization/service_semantic_input.json"),
 }
@@ -72,30 +76,60 @@ def _load_example(example_name: str) -> tuple[str, dict[str, Any]]:
         return scope_name, json.load(file)
 
 
+def _parse_option(args: list[str], option_name: str) -> str | None:
+    """Return an option value from CLI args, if present."""
+    if option_name not in args:
+        return None
+
+    index = args.index(option_name)
+    try:
+        value = args[index + 1]
+    except IndexError as exc:
+        raise ValueError(f"{option_name} requires a value") from exc
+
+    if value.startswith("--"):
+        raise ValueError(f"{option_name} requires a value")
+
+    return value
+
+
 def _parse_output_mode(args: list[str]) -> str:
     """Parse the optional --output argument."""
-    if "--output" not in args:
+    output_mode = _parse_option(args, "--output")
+    if output_mode is None:
         return "full"
 
-    index = args.index("--output")
-    try:
-        output_mode = args[index + 1]
-    except IndexError as exc:
-        raise ValueError("--output requires one of: data, report, anomaly, full") from exc
-
-    if output_mode not in {"data", "report", "anomaly", "full"}:
-        raise ValueError("--output requires one of: data, report, anomaly, full")
+    if output_mode not in {"data", "report", "anomaly", "quality", "full"}:
+        raise ValueError("--output requires one of: data, report, anomaly, quality, full")
 
     return output_mode
 
 
-def main() -> None:
-    """Run one local harmonization example and print valid JSON."""
-    args = sys.argv[1:]
+def _load_input_document(args: list[str]) -> tuple[str, dict[str, Any]]:
+    """Load either a registered example or a custom JSON input file."""
+    input_path = _parse_option(args, "--input")
+    scope_name = _parse_option(args, "--scope")
+
+    if input_path is not None:
+        if scope_name is None:
+            raise ValueError("--input requires --scope with one of: product, emission, service")
+
+        with Path(input_path).open("r", encoding="utf-8") as file:
+            return scope_name, json.load(file)
+
+    if scope_name is not None:
+        raise ValueError("--scope is only used together with --input")
+
     example_name = args[0] if args and not args[0].startswith("--") else "product"
+    return _load_example(example_name)
+
+
+def main() -> None:
+    """Run one local harmonization example or custom input and print valid JSON."""
+    args = sys.argv[1:]
     output_mode = _parse_output_mode(args)
 
-    scope_name, document = _load_example(example_name)
+    scope_name, document = _load_input_document(args)
     result = harmonize_document(document, scope_name)
 
     if output_mode == "data":
@@ -110,6 +144,14 @@ def main() -> None:
         payload = {
             "report": build_anomaly_report(anomaly_result),
             "has_errors": anomaly_result.has_errors(),
+        }
+    elif output_mode == "quality":
+        anomaly_result = analyze_harmonization_result(result)
+        payload = {
+            "data": build_clean_jsonld(result, document=document),
+            "harmonization_report": build_harmonization_report(result),
+            "anomaly_report": build_anomaly_report(anomaly_result),
+            "has_errors": result.has_errors() or anomaly_result.has_errors(),
         }
     else:
         payload = build_full_output(result, document=document)

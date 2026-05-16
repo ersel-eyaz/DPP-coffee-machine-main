@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import unittest
+
+from dpp.data_quality.anomaly.outputs import build_anomaly_report
+from dpp.data_quality.anomaly.schemas import AnomalyFinding, AnomalyResult
+from dpp.data_quality.anomaly.services import analyze_harmonization_result
+from dpp.data_quality.harmonization.services import harmonize_document
+from dpp.data_quality.harmonization.schemas import (
+    HarmonizationResult,
+    HarmonizedEntity,
+    HarmonizedField,
+    PreservedRelation,
+)
+
+
+def _field(path: str, value: object) -> HarmonizedField:
+    return HarmonizedField(
+        canonical_path=path,
+        original_label=path.rsplit(".", maxsplit=1)[1],
+        original_value=value,
+        status="mapped",
+    )
+
+
+class AnomalyServiceTests(unittest.TestCase):
+    def test_emission_calculation_mismatch(self) -> None:
+        result = HarmonizationResult(
+            scope_name="emission",
+            entities={
+                "activity-001": HarmonizedEntity(
+                    entity_id="activity-001",
+                    entity_type="ActivityData",
+                    fields={"ActivityData.quantity": _field("ActivityData.quantity", 10.0)},
+                ),
+                "factor-001": HarmonizedEntity(
+                    entity_id="factor-001",
+                    entity_type="EmissionFactor",
+                    fields={"EmissionFactor.value": _field("EmissionFactor.value", 0.5)},
+                ),
+                "record-001": HarmonizedEntity(
+                    entity_id="record-001",
+                    entity_type="GHGEmissionRecord",
+                    fields={
+                        "GHGEmissionRecord.emissions_kg_co2e": _field(
+                            "GHGEmissionRecord.emissions_kg_co2e",
+                            9.0,
+                        ),
+                    },
+                    relations=[
+                        PreservedRelation("record-001", "activity", "activity-001", "ActivityData"),
+                        PreservedRelation("record-001", "emission_factor", "factor-001", "EmissionFactor"),
+                    ],
+                ),
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+
+        self.assertIn(
+            "emission_record_calculation_mismatch",
+            {finding.check_id for finding in anomaly.findings},
+        )
+
+    def test_product_required_relation_and_counter_findings(self) -> None:
+        result = HarmonizationResult(
+            scope_name="product",
+            entities={
+                "dpp-static-001": HarmonizedEntity(
+                    entity_id="dpp-static-001",
+                    entity_type="DPPStatic",
+                    fields={"DPPStatic.weightGRM": _field("DPPStatic.weightGRM", 1000.0)},
+                ),
+                "part-static-001": HarmonizedEntity(
+                    entity_id="part-static-001",
+                    entity_type="PartStatic",
+                    fields={"PartStatic.weightGRM": _field("PartStatic.weightGRM", 1800.0)},
+                ),
+                "part-instance-001": HarmonizedEntity(
+                    entity_id="part-instance-001",
+                    entity_type="PartInstance",
+                ),
+                "dpp-instance-001": HarmonizedEntity(
+                    entity_id="dpp-instance-001",
+                    entity_type="DPPInstance",
+                    fields={
+                        "DPPInstance.brewingCount": _field("DPPInstance.brewingCount", 100),
+                        "DPPInstance.cleaningCount": _field("DPPInstance.cleaningCount", 140),
+                    },
+                    relations=[
+                        PreservedRelation("dpp-instance-001", "dppStaticLink", "dpp-static-001", "DPPStatic")
+                    ],
+                ),
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        check_ids = {finding.check_id for finding in anomaly.findings}
+
+        self.assertIn("missing_required_relation", check_ids)
+        self.assertIn("part_weight_exceeds_product_weight", check_ids)
+        self.assertIn("maintenance_counter_exceeds_brewing_count", check_ids)
+
+    def test_active_part_tree_weight_exceeds_product_weight(self) -> None:
+        result = HarmonizationResult(
+            scope_name="product",
+            entities={
+                "dpp-static-001": HarmonizedEntity(
+                    entity_id="dpp-static-001",
+                    entity_type="DPPStatic",
+                    fields={"DPPStatic.weightGRM": _field("DPPStatic.weightGRM", 1000.0)},
+                ),
+                "root-static-001": HarmonizedEntity(
+                    entity_id="root-static-001",
+                    entity_type="PartStatic",
+                    fields={"PartStatic.weightGRM": _field("PartStatic.weightGRM", 500.0)},
+                ),
+                "child-static-001": HarmonizedEntity(
+                    entity_id="child-static-001",
+                    entity_type="PartStatic",
+                    fields={"PartStatic.weightGRM": _field("PartStatic.weightGRM", 1500.0)},
+                ),
+                "detached-static-001": HarmonizedEntity(
+                    entity_id="detached-static-001",
+                    entity_type="PartStatic",
+                    fields={"PartStatic.weightGRM": _field("PartStatic.weightGRM", 900.0)},
+                ),
+                "root-part-001": HarmonizedEntity(
+                    entity_id="root-part-001",
+                    entity_type="PartInstance",
+                    relations=[
+                        PreservedRelation("root-part-001", "partStaticLink", "root-static-001", "PartStatic"),
+                        PreservedRelation("root-part-001", "compositeParts", "child-part-001", "PartInstance"),
+                        PreservedRelation(
+                            "root-part-001",
+                            "historyOfDetachedParts",
+                            "detached-part-001",
+                            "PartInstance",
+                        ),
+                    ],
+                ),
+                "child-part-001": HarmonizedEntity(
+                    entity_id="child-part-001",
+                    entity_type="PartInstance",
+                    relations=[PreservedRelation("child-part-001", "partStaticLink", "child-static-001", "PartStatic")],
+                ),
+                "detached-part-001": HarmonizedEntity(
+                    entity_id="detached-part-001",
+                    entity_type="PartInstance",
+                    relations=[
+                        PreservedRelation("detached-part-001", "partStaticLink", "detached-static-001", "PartStatic")
+                    ],
+                ),
+                "dpp-instance-001": HarmonizedEntity(
+                    entity_id="dpp-instance-001",
+                    entity_type="DPPInstance",
+                    relations=[
+                        PreservedRelation("dpp-instance-001", "dppStaticLink", "dpp-static-001", "DPPStatic"),
+                        PreservedRelation("dpp-instance-001", "partInstanceLink", "root-part-001", "PartInstance"),
+                    ],
+                ),
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "active_part_tree_weight_exceeds_product_weight"
+        )
+
+        self.assertEqual(1500.0, finding.observed_value)
+        self.assertEqual(["child-part-001"], finding.evidence["leaf_part_ids"])
+        self.assertEqual(["detached-part-001"], finding.evidence["detached_part_ids_excluded"])
+
+    def test_product_usage_ratio_findings(self) -> None:
+        result = HarmonizationResult(
+            scope_name="product",
+            entities={
+                "dpp-instance-001": HarmonizedEntity(
+                    entity_id="dpp-instance-001",
+                    entity_type="DPPInstance",
+                    fields={
+                        "DPPInstance.operatingHRS": _field("DPPInstance.operatingHRS", 120),
+                        "DPPInstance.brewingCount": _field("DPPInstance.brewingCount", 100),
+                        "DPPInstance.cleaningCount": _field("DPPInstance.cleaningCount", 140),
+                        "DPPInstance.chalkCount": _field("DPPInstance.chalkCount", 130),
+                    },
+                )
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        check_ids = [finding.check_id for finding in anomaly.findings]
+
+        self.assertEqual(2, check_ids.count("maintenance_to_brewing_ratio_high"))
+
+    def test_service_unresolved_text_requires_review(self) -> None:
+        result = HarmonizationResult(
+            scope_name="service",
+            entities={
+                "service-001": HarmonizedEntity(
+                    entity_id="service-001",
+                    entity_type="RepairServiceStep",
+                    text_harmonization={
+                        "diagnose": {
+                            "status": "unresolved",
+                            "original_value": "unknown ceramic resonance",
+                            "candidates": [],
+                        }
+                    },
+                )
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+
+        self.assertEqual(["service_text_requires_review"], [finding.check_id for finding in anomaly.findings])
+
+    def test_service_action_context_is_preserved(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "replace-001",
+                    "@type": "dpp:ReplaceServiceStep",
+                    "diagnose": "dull burrs",
+                    "observedSymptoms": ["watery espresso"],
+                    "replacedPartId": "part-old-001",
+                    "newPart": {"@id": "part-new-001"},
+                    "costEur": 89.0,
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        entity = result.entities["replace-001"]
+
+        self.assertIn("ReplaceServiceStep.replacedPartId", entity.fields)
+        self.assertEqual(
+            "part-old-001",
+            entity.fields["ReplaceServiceStep.replacedPartId"].original_value,
+        )
+        self.assertEqual(["part-new-001"], [relation.target_entity_id for relation in entity.relations])
+
+    def test_report_summary_counts_check_methods(self) -> None:
+        result = AnomalyResult(
+            scope_name="product",
+            findings=[
+                AnomalyFinding(
+                    check_id="range_rule",
+                    category="range",
+                    severity="warning",
+                    message="Range rule finding.",
+                ),
+                AnomalyFinding(
+                    check_id="iforest_score",
+                    category="statistical",
+                    severity="info",
+                    message="Isolation Forest score finding.",
+                    evidence={"check_method": "isolation_forest"},
+                ),
+            ],
+        )
+
+        report = build_anomaly_report(result)
+
+        self.assertEqual({"range": 1, "statistical": 1}, report["summary"]["category_counts"])
+        self.assertEqual(
+            {"rule_based": 1, "isolation_forest": 1},
+            report["summary"]["check_method_counts"],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

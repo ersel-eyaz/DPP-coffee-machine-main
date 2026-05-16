@@ -1,0 +1,48 @@
+{
+  "@context": {
+    "dpp": "https://example.com/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "service-anomaly-cleaning-001",
+      "@type": "dpp:CleaningServiceStep",
+      "diagnose": "UI board fault",
+      "observedSymptoms": [
+        "buttons do not respond",
+        "the machine reports a lunar alignment fault"
+      ],
+      "cleanedPartId": "part-ui-pcb-001",
+      "costEur": 450.0
+    },
+    {
+      "@id": "service-anomaly-repair-001",
+      "@type": "dpp:RepairServiceStep",
+      "diagnose": "unknown ceramic resonance in the cup tray",
+      "observedSymptoms": [
+        "brew pressure drops and rises unexpectedly"
+      ],
+      "repairedPartId": "part-water-pump-001",
+      "costEur": -12.0
+    },
+    {
+      "@id": "service-anomaly-replace-001",
+      "@type": "dpp:ReplaceServiceStep",
+      "diagnose": "dull burrs",
+      "observedSymptoms": [
+        "watery espresso"
+      ],
+      "replacedPartId": "part-burr-set-001",
+      "newPart": {
+        "@id": "part-burr-set-replacement-001",
+        "partStaticLink": {
+          "@id": "part-static-burr-set-001"
+        }
+      },
+      "costEur": 89.0
+    },
+    {
+      "@id": "part-burr-set-replacement-001",
+      "@type": "dpp:PartInstance"
+    }
+  ]
+}
