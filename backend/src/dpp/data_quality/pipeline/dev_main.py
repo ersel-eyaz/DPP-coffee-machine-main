@@ -11,6 +11,7 @@ Usage:
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output data
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output report
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission --output anomaly
+    PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main product_anomaly --output features
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission_anomaly --output quality
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main service_text --output full
     PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main --scope product --input path/to/input.json --output quality
@@ -23,6 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from dpp.data_quality.anomaly.features import build_feature_table
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
 from dpp.data_quality.harmonization.outputs import (
@@ -99,8 +101,8 @@ def _parse_output_mode(args: list[str]) -> str:
     if output_mode is None:
         return "full"
 
-    if output_mode not in {"data", "report", "anomaly", "quality", "full"}:
-        raise ValueError("--output requires one of: data, report, anomaly, quality, full")
+    if output_mode not in {"data", "report", "anomaly", "features", "quality", "full"}:
+        raise ValueError("--output requires one of: data, report, anomaly, features, quality, full")
 
     return output_mode
 
@@ -144,6 +146,11 @@ def main() -> None:
         payload = {
             "report": build_anomaly_report(anomaly_result),
             "has_errors": anomaly_result.has_errors(),
+        }
+    elif output_mode == "features":
+        payload = {
+            "feature_table": build_feature_table(result),
+            "has_errors": result.has_errors(),
         }
     elif output_mode == "quality":
         anomaly_result = analyze_harmonization_result(result)

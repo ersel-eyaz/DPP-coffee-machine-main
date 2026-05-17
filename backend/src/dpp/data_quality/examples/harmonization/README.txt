@@ -18,12 +18,16 @@ From backend/:
 
   PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main product_anomaly --output anomaly
   PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main service_anomaly --output anomaly
+  PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main product_anomaly --output features
+  PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission_anomaly --output features
   PYTHONPATH=src python -m dpp.data_quality.pipeline.dev_main emission_anomaly --output quality
 
 From backend/src/:
 
   python -m dpp.data_quality.pipeline.dev_main product_anomaly --output anomaly
   python -m dpp.data_quality.pipeline.dev_main service_anomaly --output anomaly
+  python -m dpp.data_quality.pipeline.dev_main product_anomaly --output features
+  python -m dpp.data_quality.pipeline.dev_main emission_anomaly --output features
   python -m dpp.data_quality.pipeline.dev_main emission_anomaly --output quality
 
 Registered example keys are defined in pipeline/dev_main.py. They are kept for
@@ -58,6 +62,10 @@ report
 
 anomaly
   Anomaly/plausibility report only.
+
+features
+  Flat numeric feature table for later statistical baselines and ML-based
+  anomaly detection.
 
 quality
   Clean data, harmonization report, and anomaly report together.
