@@ -62,6 +62,140 @@ class AnomalyServiceTests(unittest.TestCase):
             {finding.check_id for finding in anomaly.findings},
         )
 
+    def test_emission_unit_incompatibility(self) -> None:
+        result = HarmonizationResult(
+            scope_name="emission",
+            entities={
+                "activity-001": HarmonizedEntity(
+                    entity_id="activity-001",
+                    entity_type="ActivityData",
+                    fields={
+                        "ActivityData.quantity": _field("ActivityData.quantity", 10.0),
+                        "ActivityData.unit": _field("ActivityData.unit", "kWh"),
+                    },
+                ),
+                "factor-001": HarmonizedEntity(
+                    entity_id="factor-001",
+                    entity_type="EmissionFactor",
+                    fields={
+                        "EmissionFactor.value": _field("EmissionFactor.value", 0.5),
+                        "EmissionFactor.unit": _field("EmissionFactor.unit", "kgCO2e/km"),
+                    },
+                ),
+                "record-001": HarmonizedEntity(
+                    entity_id="record-001",
+                    entity_type="GHGEmissionRecord",
+                    fields={
+                        "GHGEmissionRecord.emissions_kg_co2e": _field(
+                            "GHGEmissionRecord.emissions_kg_co2e",
+                            5.0,
+                        ),
+                    },
+                    relations=[
+                        PreservedRelation("record-001", "activity", "activity-001", "ActivityData"),
+                        PreservedRelation("record-001", "emission_factor", "factor-001", "EmissionFactor"),
+                    ],
+                ),
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        finding = next(item for item in anomaly.findings if item.check_id == "emission_unit_incompatibility")
+
+        self.assertEqual({"emission_factor_unit": "kgCO2e/kWh"}, finding.expected)
+        self.assertEqual(
+            {"activity_unit": "kWh", "factor_unit": "kgCO2e/km"},
+            finding.observed_value,
+        )
+
+    def test_zero_reported_emissions_with_positive_inputs(self) -> None:
+        result = HarmonizationResult(
+            scope_name="emission",
+            entities={
+                "activity-001": HarmonizedEntity(
+                    entity_id="activity-001",
+                    entity_type="ActivityData",
+                    fields={"ActivityData.quantity": _field("ActivityData.quantity", 10.0)},
+                ),
+                "factor-001": HarmonizedEntity(
+                    entity_id="factor-001",
+                    entity_type="EmissionFactor",
+                    fields={"EmissionFactor.value": _field("EmissionFactor.value", 0.5)},
+                ),
+                "record-001": HarmonizedEntity(
+                    entity_id="record-001",
+                    entity_type="GHGEmissionRecord",
+                    fields={
+                        "GHGEmissionRecord.emissions_kg_co2e": _field(
+                            "GHGEmissionRecord.emissions_kg_co2e",
+                            0.0,
+                        ),
+                    },
+                    relations=[
+                        PreservedRelation("record-001", "activity", "activity-001", "ActivityData"),
+                        PreservedRelation("record-001", "emission_factor", "factor-001", "EmissionFactor"),
+                    ],
+                ),
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        check_ids = [finding.check_id for finding in anomaly.findings]
+
+        self.assertIn("zero_reported_emissions_with_positive_inputs", check_ids)
+        self.assertIn("emission_record_calculation_mismatch", check_ids)
+
+    def test_possible_duplicate_emission_record(self) -> None:
+        result = HarmonizationResult(
+            scope_name="emission",
+            entities={
+                "record-001": HarmonizedEntity(
+                    entity_id="record-001",
+                    entity_type="GHGEmissionRecord",
+                    fields={
+                        "GHGEmissionRecord.scope": _field("GHGEmissionRecord.scope", "scope_3"),
+                        "GHGEmissionRecord.scope3_category": _field(
+                            "GHGEmissionRecord.scope3_category",
+                            "purchased_goods_and_services",
+                        ),
+                        "GHGEmissionRecord.emissions_kg_co2e": _field(
+                            "GHGEmissionRecord.emissions_kg_co2e",
+                            4.0,
+                        ),
+                    },
+                    relations=[
+                        PreservedRelation("record-001", "activity", "activity-001", "ActivityData"),
+                        PreservedRelation("record-001", "emission_factor", "factor-001", "EmissionFactor"),
+                    ],
+                ),
+                "record-002": HarmonizedEntity(
+                    entity_id="record-002",
+                    entity_type="GHGEmissionRecord",
+                    fields={
+                        "GHGEmissionRecord.scope": _field("GHGEmissionRecord.scope", "scope_3"),
+                        "GHGEmissionRecord.scope3_category": _field(
+                            "GHGEmissionRecord.scope3_category",
+                            "purchased_goods_and_services",
+                        ),
+                        "GHGEmissionRecord.emissions_kg_co2e": _field(
+                            "GHGEmissionRecord.emissions_kg_co2e",
+                            4.0,
+                        ),
+                    },
+                    relations=[
+                        PreservedRelation("record-002", "activity", "activity-001", "ActivityData"),
+                        PreservedRelation("record-002", "emission_factor", "factor-001", "EmissionFactor"),
+                    ],
+                ),
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        finding = next(item for item in anomaly.findings if item.check_id == "possible_duplicate_emission_record")
+
+        self.assertEqual("info", finding.severity)
+        self.assertEqual(["record-001", "record-002"], finding.evidence["duplicate_record_ids"])
+
     def test_product_required_relation_and_counter_findings(self) -> None:
         result = HarmonizationResult(
             scope_name="product",
@@ -100,6 +234,70 @@ class AnomalyServiceTests(unittest.TestCase):
         self.assertIn("missing_required_relation", check_ids)
         self.assertIn("part_weight_exceeds_product_weight", check_ids)
         self.assertIn("maintenance_counter_exceeds_brewing_count", check_ids)
+
+    def test_part_static_zero_dimension_is_out_of_range(self) -> None:
+        result = HarmonizationResult(
+            scope_name="product",
+            entities={
+                "part-static-001": HarmonizedEntity(
+                    entity_id="part-static-001",
+                    entity_type="PartStatic",
+                    fields={"PartStatic.heightCM": _field("PartStatic.heightCM", 0.0)},
+                )
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        finding = next(item for item in anomaly.findings if item.check_id == "part_height_positive")
+
+        self.assertEqual({"min_exclusive": 0.0}, finding.expected)
+
+    def test_material_weight_exceeds_part_weight(self) -> None:
+        result = HarmonizationResult(
+            scope_name="product",
+            entities={
+                "part-static-001": HarmonizedEntity(
+                    entity_id="part-static-001",
+                    entity_type="PartStatic",
+                    fields={"PartStatic.weightGRM": _field("PartStatic.weightGRM", 1000.0)},
+                ),
+                "material-001": HarmonizedEntity(
+                    entity_id="material-001",
+                    entity_type="MaterialInstance",
+                    fields={"MaterialInstance.weightGRM": _field("MaterialInstance.weightGRM", 700.0)},
+                ),
+                "material-002": HarmonizedEntity(
+                    entity_id="material-002",
+                    entity_type="MaterialInstance",
+                    fields={"MaterialInstance.weightGRM": _field("MaterialInstance.weightGRM", 500.0)},
+                ),
+                "part-instance-001": HarmonizedEntity(
+                    entity_id="part-instance-001",
+                    entity_type="PartInstance",
+                    relations=[
+                        PreservedRelation("part-instance-001", "partStaticLink", "part-static-001", "PartStatic"),
+                        PreservedRelation(
+                            "part-instance-001",
+                            "compositeMaterials",
+                            "material-001",
+                            "MaterialInstance",
+                        ),
+                        PreservedRelation(
+                            "part-instance-001",
+                            "compositeMaterials",
+                            "material-002",
+                            "MaterialInstance",
+                        ),
+                    ],
+                ),
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        finding = next(item for item in anomaly.findings if item.check_id == "material_weight_exceeds_part_weight")
+
+        self.assertEqual(1200.0, finding.observed_value)
+        self.assertEqual(["material-001", "material-002"], finding.evidence["material_instance_ids"])
 
     def test_active_part_tree_weight_exceeds_product_weight(self) -> None:
         result = HarmonizationResult(
@@ -242,6 +440,31 @@ class AnomalyServiceTests(unittest.TestCase):
             entity.fields["ReplaceServiceStep.replacedPartId"].original_value,
         )
         self.assertEqual(["part-new-001"], [relation.target_entity_id for relation in entity.relations])
+
+    def test_replaced_and_new_parts_pair_context_is_preserved(self) -> None:
+        replaced_pairs = [["part-old-001", {"@id": "part-new-001"}]]
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "refurbishment-001",
+                    "@type": "dpp:RefurbishmentServiceStep",
+                    "diagnose": "dull burrs",
+                    "observedSymptoms": ["watery espresso"],
+                    "replacedAndNewParts": replaced_pairs,
+                    "costEur": 120.0,
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        entity = result.entities["refurbishment-001"]
+
+        self.assertEqual(
+            replaced_pairs,
+            entity.fields["RefurbishmentServiceStep.replacedAndNewParts"].original_value,
+        )
+        self.assertEqual([], entity.relations)
 
     def test_report_summary_counts_check_methods(self) -> None:
         result = AnomalyResult(

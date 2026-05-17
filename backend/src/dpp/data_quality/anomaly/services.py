@@ -66,7 +66,9 @@ def _numeric_field_value(entity: HarmonizedEntity, field_path: str) -> float | N
 
 def _is_out_of_range(value: float, rule: NumericRangeRule) -> bool:
     """Return True when a numeric value violates a range rule."""
-    if rule.min_value is not None and value < rule.min_value:
+    if rule.min_value is not None and rule.min_exclusive and value <= rule.min_value:
+        return True
+    if rule.min_value is not None and not rule.min_exclusive and value < rule.min_value:
         return True
     if rule.max_value is not None and value > rule.max_value:
         return True
@@ -199,6 +201,64 @@ def _part_static_weight(result: HarmonizationResult, part_instance: HarmonizedEn
         return part_static_id, None
 
     return part_static_id, _numeric_field_value(part_static, "PartStatic.weightGRM")
+
+
+def _apply_material_weight_consistency_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
+    """Compare each part's material composition weight with its linked static part weight."""
+    findings: list[AnomalyFinding] = []
+
+    for part_instance in [entity for entity in result.entities.values() if entity.entity_type == "PartInstance"]:
+        part_static_id, part_weight = _part_static_weight(result, part_instance)
+        material_ids = _relation_targets(part_instance, "compositeMaterials")
+        if part_weight is None or not material_ids:
+            continue
+
+        material_weights: list[float] = []
+        material_ids_with_weight: list[str] = []
+        missing_material_ids: list[str] = []
+        missing_weight_material_ids: list[str] = []
+
+        for material_id in material_ids:
+            material = result.entities.get(material_id)
+            if material is None or material.entity_type != "MaterialInstance":
+                missing_material_ids.append(material_id)
+                continue
+
+            material_weight = _numeric_field_value(material, "MaterialInstance.weightGRM")
+            if material_weight is None:
+                missing_weight_material_ids.append(material_id)
+                continue
+
+            material_ids_with_weight.append(material_id)
+            material_weights.append(material_weight)
+
+        total_material_weight = sum(material_weights)
+        if total_material_weight <= 0 or total_material_weight <= part_weight * 1.05:
+            continue
+
+        findings.append(
+            AnomalyFinding(
+                check_id="material_weight_exceeds_part_weight",
+                category="consistency",
+                severity="warning",
+                message="Material composition weight is greater than the linked part weight.",
+                entity_id=part_instance.entity_id,
+                entity_type=part_instance.entity_type,
+                relation_path="PartInstance.compositeMaterials",
+                observed_value=total_material_weight,
+                expected={"max_approx": part_weight, "tolerance_factor": 1.05},
+                evidence={
+                    "part_static_id": part_static_id,
+                    "material_instance_ids": material_ids_with_weight,
+                    "material_weightsGRM": material_weights,
+                    "missing_material_ids": missing_material_ids,
+                    "missing_weight_material_ids": missing_weight_material_ids,
+                },
+                review_action="verify_material_composition_or_part_weight",
+            )
+        )
+
+    return findings
 
 
 def _active_part_tree_weight_summary(
@@ -575,6 +635,28 @@ def _apply_emission_calculation_checks(result: HarmonizationResult) -> list[Anom
         if quantity is None or factor_value is None or reported is None:
             continue
 
+        if quantity > 0 and factor_value > 0 and reported == 0:
+            findings.append(
+                AnomalyFinding(
+                    check_id="zero_reported_emissions_with_positive_inputs",
+                    category="calculation",
+                    severity="warning",
+                    message="Reported GHG emissions are zero although activity quantity and emission factor are positive.",
+                    entity_id=record.entity_id,
+                    entity_type=record.entity_type,
+                    field_path="GHGEmissionRecord.emissions_kg_co2e",
+                    observed_value=reported,
+                    expected={"emissions_kg_co2e": "> 0"},
+                    evidence={
+                        "activity_entity_id": activity.entity_id,
+                        "factor_entity_id": factor.entity_id,
+                        "quantity": quantity,
+                        "factor_value": factor_value,
+                    },
+                    review_action="verify_reported_emissions_or_calculation_method",
+                )
+            )
+
         expected = quantity * factor_value
         tolerance = max(abs(expected) * 0.05, 0.01)
         difference = abs(reported - expected)
@@ -601,6 +683,117 @@ def _apply_emission_calculation_checks(result: HarmonizationResult) -> list[Anom
                     "absolute_difference": round(difference, 6),
                 },
                 review_action="verify_calculation_or_factor_unit",
+            )
+        )
+
+    return findings
+
+
+def _apply_duplicate_emission_record_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
+    """Flag possible duplicate GHG records with identical calculation signatures."""
+    records_by_signature: dict[tuple[Any, ...], list[HarmonizedEntity]] = {}
+
+    for record in [entity for entity in result.entities.values() if entity.entity_type == "GHGEmissionRecord"]:
+        activity_id = _single_relation_target(record, "activity")
+        factor_id = _single_relation_target(record, "emission_factor")
+        reported = _numeric_field_value(record, "GHGEmissionRecord.emissions_kg_co2e")
+        signature = (
+            activity_id,
+            factor_id,
+            _field_value(record, "GHGEmissionRecord.scope"),
+            _field_value(record, "GHGEmissionRecord.scope3_category"),
+            reported,
+        )
+        records_by_signature.setdefault(signature, []).append(record)
+
+    findings: list[AnomalyFinding] = []
+    for signature, records in records_by_signature.items():
+        if len(records) < 2:
+            continue
+
+        activity_id, factor_id, scope_value, scope3_category, reported = signature
+        finding_record = records[0]
+        findings.append(
+            AnomalyFinding(
+                check_id="possible_duplicate_emission_record",
+                category="review",
+                severity="info",
+                message="Multiple GHG emission records share the same calculation signature.",
+                entity_id=finding_record.entity_id,
+                entity_type=finding_record.entity_type,
+                field_path="GHGEmissionRecord.emissions_kg_co2e",
+                observed_value=reported,
+                expected="unique emission record or documented duplicate context",
+                evidence={
+                    "duplicate_record_ids": [record.entity_id for record in records],
+                    "activity_entity_id": activity_id,
+                    "factor_entity_id": factor_id,
+                    "scope": scope_value,
+                    "scope3_category": scope3_category,
+                    "record_count": len(records),
+                },
+                review_action="verify_duplicate_or_missing_period_context",
+            )
+        )
+
+    return findings
+
+
+def _compatible_emission_factor_unit(activity_unit: str) -> str | None:
+    """
+    Return the expected emission-factor unit for an activity unit.
+
+    This mirrors the prototype GHG unit compatibility semantics while keeping
+    the data-quality module independent from the legacy model classes.
+    """
+    return {
+        "kWh": "kgCO2e/kWh",
+        "kg": "kgCO2e/kg",
+        "km": "kgCO2e/km",
+    }.get(activity_unit)
+
+
+def _apply_emission_unit_compatibility_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
+    """Check whether activity and emission-factor units are semantically compatible."""
+    findings: list[AnomalyFinding] = []
+
+    for record in [entity for entity in result.entities.values() if entity.entity_type == "GHGEmissionRecord"]:
+        activity_targets = _relation_targets(record, "activity")
+        factor_targets = _relation_targets(record, "emission_factor")
+        if not activity_targets or not factor_targets:
+            continue
+
+        activity = result.entities.get(activity_targets[0])
+        factor = result.entities.get(factor_targets[0])
+        if activity is None or factor is None:
+            continue
+
+        activity_unit = _field_value(activity, "ActivityData.unit")
+        factor_unit = _field_value(factor, "EmissionFactor.unit")
+        if not isinstance(activity_unit, str) or not isinstance(factor_unit, str):
+            continue
+
+        expected_factor_unit = _compatible_emission_factor_unit(activity_unit)
+        if expected_factor_unit is None or factor_unit == expected_factor_unit:
+            continue
+
+        findings.append(
+            AnomalyFinding(
+                check_id="emission_unit_incompatibility",
+                category="consistency",
+                severity="warning",
+                message="Activity unit and emission-factor unit are not compatible.",
+                entity_id=record.entity_id,
+                entity_type=record.entity_type,
+                relation_path="GHGEmissionRecord.emission_factor",
+                observed_value={"activity_unit": activity_unit, "factor_unit": factor_unit},
+                expected={"emission_factor_unit": expected_factor_unit},
+                evidence={
+                    "activity_entity_id": activity.entity_id,
+                    "factor_entity_id": factor.entity_id,
+                    "compatibility_basis": "prototype_ghg_unit_compatibility",
+                },
+                review_action="verify_activity_or_emission_factor_unit",
             )
         )
 
@@ -759,12 +952,15 @@ def analyze_harmonization_result(result: HarmonizationResult) -> AnomalyResult:
     if result.scope_name == "product":
         findings.extend(_apply_numeric_range_rules(result, PRODUCT_NUMERIC_RANGE_RULES))
         findings.extend(_apply_product_profile_checks(result))
+        findings.extend(_apply_material_weight_consistency_checks(result))
         findings.extend(_apply_active_part_tree_weight_checks(result))
         findings.extend(_apply_product_consistency_checks(result))
         findings.extend(_apply_product_usage_ratio_checks(result))
     elif result.scope_name == "emission":
         findings.extend(_apply_numeric_range_rules(result, EMISSION_NUMERIC_RANGE_RULES))
+        findings.extend(_apply_emission_unit_compatibility_checks(result))
         findings.extend(_apply_emission_calculation_checks(result))
+        findings.extend(_apply_duplicate_emission_record_checks(result))
         findings.extend(_apply_emission_scope_category_checks(result))
     elif result.scope_name == "service":
         findings.extend(_apply_numeric_range_rules(result, SERVICE_NUMERIC_RANGE_RULES))

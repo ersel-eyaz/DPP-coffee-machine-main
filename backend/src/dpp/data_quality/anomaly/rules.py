@@ -19,6 +19,7 @@ class NumericRangeRule:
     field_path: str
     min_value: float | None = None
     max_value: float | None = None
+    min_exclusive: bool = False
     severity: str = "warning"
     description: str = ""
 
@@ -26,7 +27,7 @@ class NumericRangeRule:
         """Return a compact expected range dictionary for report output."""
         expected: dict[str, float] = {}
         if self.min_value is not None:
-            expected["min"] = self.min_value
+            expected["min_exclusive" if self.min_exclusive else "min"] = self.min_value
         if self.max_value is not None:
             expected["max"] = self.max_value
         return expected
@@ -66,32 +67,36 @@ PRODUCT_NUMERIC_RANGE_RULES: tuple[NumericRangeRule, ...] = (
         "PartStatic.weightGRM",
         0.0,
         None,
+        min_exclusive=True,
         severity="error",
-        description="Part mass must not be negative.",
+        description="Part mass must be greater than zero.",
     ),
     NumericRangeRule(
         "part_height_positive",
         "PartStatic.heightCM",
         0.0,
         None,
+        min_exclusive=True,
         severity="error",
-        description="Part height must not be negative.",
+        description="Part height must be greater than zero.",
     ),
     NumericRangeRule(
         "part_width_positive",
         "PartStatic.widthCM",
         0.0,
         None,
+        min_exclusive=True,
         severity="error",
-        description="Part width must not be negative.",
+        description="Part width must be greater than zero.",
     ),
     NumericRangeRule(
         "part_depth_positive",
         "PartStatic.depthCM",
         0.0,
         None,
+        min_exclusive=True,
         severity="error",
-        description="Part depth must not be negative.",
+        description="Part depth must be greater than zero.",
     ),
     NumericRangeRule(
         "material_weight_positive",

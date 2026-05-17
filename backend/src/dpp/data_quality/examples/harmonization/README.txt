@@ -84,14 +84,15 @@ Anomaly/plausibility examples
 
 product_anomaly_input.json
   Product-scope example designed to trigger relationship, numeric range,
-  product profile, and cross-field consistency findings.
+  product profile, graph/material-weight, and cross-field consistency findings.
 
 product_profile_input.json
   Product-scope example for the synthetic BaristaCore 2500 profile check.
 
 emission_anomaly_input.json
   Emission-scope example designed to trigger negative numeric values,
-  calculation mismatch, and Scope 3 category consistency findings.
+  unit compatibility, calculation mismatch, zero reported emissions, possible
+  duplicate records, and Scope 3 category consistency findings.
 
 service_anomaly_input.json
   Service-scope example designed to trigger high/negative cost checks,
