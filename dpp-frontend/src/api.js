@@ -335,4 +335,20 @@ export const api = {
     const url = joinURL(API_BASE_URL, `/jsonld/export/${sid}/download`);
     return fetchBlob(url);
   },
+
+  /**
+   * Run the isolated data-quality layer on an external JSON-LD document.
+   * @param {{scope: "product"|"emission"|"service", mode: "harmonization"|"anomaly"|"both", document: any}} body
+   */
+  runDataQuality(body) {
+    return postJSON(joinURL(API_BASE_URL, "/data-quality/run"), body);
+  },
+
+  listDataQualityExamples() {
+    return fetchJSON(joinURL(API_BASE_URL, "/data-quality/examples"));
+  },
+
+  getDataQualityExample(name) {
+    return fetchJSON(joinURL(API_BASE_URL, `/data-quality/examples/${encodeURIComponent(name)}`));
+  },
 };

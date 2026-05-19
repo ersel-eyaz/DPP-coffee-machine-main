@@ -1,6 +1,7 @@
 // src/pages/Home.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Container, Form, ListGroup, Row, Spinner } from "react-bootstrap";
+import { ClipboardCheck } from "react-bootstrap-icons";
 import { Link } from "react-router-dom";
 
 import { api } from "../api";
@@ -55,7 +56,11 @@ export default function Home() {
           <h2 className="mb-0">Select a DPP instance</h2>
           <div className="text-muted">Pick a product to view its Digital Product Passport.</div>
         </Col>
-        <Col xs="auto">
+        <Col xs="auto" className="d-flex align-items-center gap-2">
+          <Button as={Link} to="/data-quality" variant="outline-primary" size="sm">
+            <ClipboardCheck className="me-1" aria-hidden="true" />
+            Data Quality
+          </Button>
           <Badge bg="secondary">{items.length} total</Badge>
         </Col>
       </Row>

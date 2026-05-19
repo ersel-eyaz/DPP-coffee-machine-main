@@ -13,6 +13,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from dpp.models.db import mongodb
 from dpp.models.init import init_db_with_beanie
 
+from .routers.data_quality import router as data_quality_router
 from .routers.dpp import router as dpp_router
 from .routers.jsonld_export import router as jsonld_router
 from .routers.material import router as material_router
@@ -74,6 +75,7 @@ app.include_router(material_router, prefix="/material", tags=["material"])
 app.include_router(part_router, prefix="/part", tags=["part"])
 app.include_router(dpp_router, prefix="/dpp", tags=["dpp"])
 app.include_router(jsonld_router, prefix="/jsonld", tags=["jsonld"])
+app.include_router(data_quality_router, prefix="/data-quality", tags=["data-quality"])
 
 
 @app.get("/")

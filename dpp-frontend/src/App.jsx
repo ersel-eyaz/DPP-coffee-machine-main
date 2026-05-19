@@ -8,6 +8,7 @@ const OverView = lazy(() => import("./pages/OverView.jsx"));
 const ServiceView = lazy(() => import("./pages/ServiceView.jsx"));
 const EolView = lazy(() => import("./pages/EolView.jsx"));
 const UtilityView = lazy(() => import("./pages/UtilityView.jsx"));
+const DataQualityView = lazy(() => import("./pages/DataQualityView.jsx"));
 
 function NotFoundView() {
   return <div style={CONTENT_PAD_STYLE}>Not found</div>;
@@ -33,6 +34,7 @@ const HEADER_STYLE = {
   alignItems: "center",
 };
 const BRAND_LINK_STYLE = { textDecoration: "none", fontWeight: 700 };
+const HEADER_LINK_STYLE = { textDecoration: "none", fontWeight: 600, color: "#334155" };
 const CONTENT_PAD_STYLE = { padding: 16 };
 
 export default function App() {
@@ -42,11 +44,15 @@ export default function App() {
         <Link to="/" style={BRAND_LINK_STYLE}>
           DPP
         </Link>
+        <Link to="/data-quality" style={HEADER_LINK_STYLE}>
+          Data Quality
+        </Link>
       </header>
 
       <Suspense fallback={<Loader />}>
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/data-quality" element={<DataQualityView />} />
 
           <Route path="/dpp/:instanceId" element={<DppLayout />}>
             <Route index element={<Navigate to="overview" replace />} />
