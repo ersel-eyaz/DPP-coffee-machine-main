@@ -30,8 +30,10 @@ services:
       MONGO_PASSWORD: example
       MONGO_DB: dpp_prototype
       MONGO_AUTH_SOURCE: admin
+      HF_HOME: /models/huggingface
     volumes:
       - ./backend/src:/project/src:delegated
+      - huggingface_cache:/models/huggingface
 
   frontend:
     profiles: ["full"]
@@ -52,3 +54,4 @@ services:
 volumes:
   mongo_data:
   node_modules:
+  huggingface_cache:

@@ -10,10 +10,12 @@ from pydantic import BaseModel, Field
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
+from dpp.data_quality.harmonization.parser import ParseError, parse_jsonld_document
 from dpp.data_quality.harmonization.services import harmonize_document
+from dpp.data_quality.scopes import SUPPORTED_SCOPES
 
 
-DataQualityScope = Literal["product", "emission", "service"]
+DataQualityScope = Literal["auto", "product", "emission", "service"]
 DataQualityMode = Literal["harmonization", "anomaly", "both"]
 
 
@@ -41,10 +43,20 @@ EXAMPLE_DOCUMENTS: Dict[str, Dict[str, str]] = {
         "scope": "emission",
         "path": "harmonization/emission_anomaly_input.json",
     },
+    "emission_semantic": {
+        "label": "Emission semantic",
+        "scope": "emission",
+        "path": "harmonization/enum_semantic_input.json",
+    },
     "service_text": {
         "label": "Service text",
         "scope": "service",
         "path": "harmonization/service_text_input.json",
+    },
+    "service_semantic": {
+        "label": "Service semantic",
+        "scope": "service",
+        "path": "harmonization/service_semantic_input.json",
     },
     "service_anomaly": {
         "label": "Service anomaly",
@@ -56,6 +68,49 @@ EXAMPLE_DOCUMENTS: Dict[str, Dict[str, str]] = {
 
 def _examples_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "data_quality" / "examples"
+
+
+def _detect_scope(document: Dict[str, Any]) -> str:
+    """Infer a data-quality scope from JSON-LD entity types."""
+    try:
+        parsed = parse_jsonld_document(document)
+    except ParseError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not parse JSON-LD for scope detection: {exc}") from exc
+
+    candidate_scopes = set()
+    ignored_overlap_only = False
+
+    for entity in parsed.entities:
+        owners = [
+            scope_name
+            for scope_name, scope in SUPPORTED_SCOPES.items()
+            if entity.entity_type in scope.entities
+        ]
+        if len(owners) == 1:
+            candidate_scopes.add(owners[0])
+        elif owners:
+            ignored_overlap_only = True
+
+    if len(candidate_scopes) == 1:
+        return next(iter(candidate_scopes))
+
+    if len(candidate_scopes) > 1:
+        names = ", ".join(sorted(candidate_scopes))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Multiple data-quality scopes detected ({names}). Please choose one explicitly.",
+        )
+
+    if ignored_overlap_only:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not auto-detect scope from shared entity types only. Please choose product, emission, or service.",
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail="Could not auto-detect scope from entity types. Please choose product, emission, or service.",
+    )
 
 
 @router.get("/examples")
@@ -99,13 +154,16 @@ async def run_data_quality(request: DataQualityRunRequest) -> Dict[str, Any]:
     This endpoint is intentionally stateless: it does not create or update DPP
     instances and does not write to MongoDB.
     """
+    scope_name = _detect_scope(request.document) if request.scope == "auto" else request.scope
+
     try:
-        result = harmonize_document(request.document, request.scope)
+        result = harmonize_document(request.document, scope_name)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Harmonization failed: {exc}") from exc
 
     payload: Dict[str, Any] = {
-        "scope": request.scope,
+        "scope": scope_name,
+        "requested_scope": request.scope,
         "mode": request.mode,
         "data": build_clean_jsonld(result, document=request.document),
         "harmonization_report": build_harmonization_report(result),

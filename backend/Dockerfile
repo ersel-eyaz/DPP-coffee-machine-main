@@ -14,9 +14,9 @@ RUN curl -sSL https://pdm-project.org/install-pdm.py | python3 -
 
 WORKDIR /project
 
-# Copy only files that affect deps first
+# Copy only files that affect legacy backend deps first
 COPY pyproject.toml README.md ./
-# Copy lock file if it exists
+# Preserve the legacy optional-lock behavior.
 RUN if [ -f pdm.lock ]; then cp pdm.lock .; fi
 
 # Create the venv explicitly and put it first on PATH
@@ -26,6 +26,12 @@ ENV PATH="/project/.venv/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/us
 
 # Install production deps into the venv
 RUN pdm use -f /project/.venv && pdm install --prod --no-editable
+
+# Install data-quality semantic runtime separately from legacy backend deps.
+COPY data-quality-requirements.txt ./
+# Semantic harmonization runs on CPU; avoid pulling CUDA runtime packages into the local demo image.
+RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir -r data-quality-requirements.txt
 
 # tiny entrypoint that can re-install if venv is missing
 COPY docker/entrypoint.sh /entrypoint.sh
