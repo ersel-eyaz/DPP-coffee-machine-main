@@ -1,9 +1,9 @@
 """
 Minimal JSON-LD-like parser for the harmonization layer.
 
-The parser extracts entities, scalar fields, and trusted structural relations
-from a dictionary input. It does not perform label harmonization, unit
-normalization, relation harmonization, or anomaly detection.
+The parser extracts entities, scalar fields, trusted references, and embedded
+typed child objects from a dictionary input. It does not perform label
+harmonization, unit normalization, relation harmonization, or anomaly detection.
 """
 
 from __future__ import annotations
@@ -45,6 +45,14 @@ class ParsedRelation:
 
 
 @dataclass(frozen=True)
+class ParsedEmbeddedEntity:
+    """A typed entity embedded below one structural input property."""
+
+    label: str
+    entity: "ParsedEntity"
+
+
+@dataclass(frozen=True)
 class ParsedEntity:
     """
     One parsed input entity.
@@ -54,12 +62,15 @@ class ParsedEntity:
         entity_type: Entity type from '@type', with namespace prefix removed.
         fields: Raw non-relation fields.
         relations: Raw relation references.
+        embedded_entities: Typed owned children found below this entity.
     """
 
     entity_id: str
     entity_type: str
+    has_explicit_id: bool = True
     fields: list[ParsedField] = field(default_factory=list)
     relations: list[ParsedRelation] = field(default_factory=list)
+    embedded_entities: list[ParsedEmbeddedEntity] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -105,12 +116,12 @@ def _extract_entity_type(raw_type: Any) -> str:
     raise ParseError(f"Invalid or missing @type: {raw_type!r}")
 
 
-def _extract_entity_id(raw_id: Any, *, node_index: int) -> str:
-    """Extract an entity id from '@id'."""
+def _extract_entity_id(raw_id: Any, *, fallback_id: str) -> str:
+    """Extract an entity id, using a deterministic path id for embedded objects."""
     if isinstance(raw_id, str) and raw_id.strip():
         return raw_id.strip()
 
-    raise ParseError(f"Invalid or missing @id for graph node at index {node_index}")
+    return fallback_id
 
 
 def _is_relation_value(value: Any) -> bool:
@@ -146,22 +157,64 @@ def _extract_relation_targets(value: Any) -> list[str]:
     return []
 
 
-def _parse_graph_node(node: Any, *, node_index: int) -> ParsedEntity:
-    """Parse one node from the '@graph' list."""
-    if not isinstance(node, dict):
-        raise ParseError(f"Graph node at index {node_index} must be an object.")
+def _normalize_nested_value(value: Any) -> Any:
+    """Normalize compact JSON-LD measurement objects for downstream harmonization."""
+    if not isinstance(value, dict):
+        return value
 
-    entity_id = _extract_entity_id(node.get("@id"), node_index=node_index)
+    scalar_value = value.get("value", value.get("schema:value"))
+    unit = value.get("unit", value.get("unitCode", value.get("schema:unitCode")))
+    if scalar_value is None or unit is None:
+        return value
+
+    return {"value": scalar_value, "unit": unit}
+
+
+def _parse_graph_node(node: Any, *, fallback_id: str) -> ParsedEntity:
+    """Parse one root or embedded typed node."""
+    if not isinstance(node, dict):
+        raise ParseError(f"Entity node at {fallback_id!r} must be an object.")
+
+    entity_id = _extract_entity_id(node.get("@id"), fallback_id=fallback_id)
     entity_type = _extract_entity_type(node.get("@type"))
 
     fields: list[ParsedField] = []
     relations: list[ParsedRelation] = []
+    embedded_entities: list[ParsedEmbeddedEntity] = []
 
     for raw_label, value in node.items():
         if raw_label in {"@id", "@type", "@context"}:
             continue
 
         label = _strip_namespace(raw_label)
+        normalized_value = _normalize_nested_value(value)
+        if normalized_value is not value:
+            fields.append(ParsedField(label=label, value=normalized_value))
+            continue
+
+        child_values: list[dict[str, Any]] = []
+        if isinstance(value, dict) and "@type" in value:
+            child_values = [value]
+        elif isinstance(value, list):
+            child_values = [
+                item
+                for item in value
+                if isinstance(item, dict) and "@type" in item
+            ]
+
+        if child_values:
+            embedded_entities.extend(
+                ParsedEmbeddedEntity(
+                    label=label,
+                    entity=_parse_graph_node(
+                        child,
+                        fallback_id=f"{entity_id}/{label}/{index}",
+                    ),
+                )
+                for index, child in enumerate(child_values)
+            )
+            continue
+
         target_ids = _extract_relation_targets(value)
 
         if target_ids:
@@ -171,13 +224,15 @@ def _parse_graph_node(node: Any, *, node_index: int) -> ParsedEntity:
             )
             continue
 
-        fields.append(ParsedField(label=label, value=value))
+        fields.append(ParsedField(label=label, value=normalized_value))
 
     return ParsedEntity(
         entity_id=entity_id,
         entity_type=entity_type,
+        has_explicit_id=isinstance(node.get("@id"), str) and bool(node.get("@id").strip()),
         fields=fields,
         relations=relations,
+        embedded_entities=embedded_entities,
     )
 
 
@@ -206,14 +261,14 @@ def parse_jsonld_document(document: dict[str, Any]) -> ParsedDocument:
 
         return ParsedDocument(
             entities=[
-                _parse_graph_node(node, node_index=index)
+                _parse_graph_node(node, fallback_id=f"graph-node-{index}")
                 for index, node in enumerate(graph)
             ]
         )
 
     if "@id" in document and "@type" in document:
         return ParsedDocument(
-            entities=[_parse_graph_node(document, node_index=0)]
+            entities=[_parse_graph_node(document, fallback_id="root-node-0")]
         )
 
     raise ParseError("Input document must contain '@graph' or a single '@id'/'@type' node.")

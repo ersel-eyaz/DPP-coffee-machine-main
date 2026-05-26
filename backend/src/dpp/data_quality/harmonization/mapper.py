@@ -82,6 +82,11 @@ def _normalize_label(label: str) -> str:
 _ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
     # Product scope: product-level static fields.
     ("product", "DPPStatic"): {
+        "category": "DPPStatic.productClass",
+        "weight": "DPPStatic.weightGRM",
+        "height": "DPPStatic.heightCM",
+        "width": "DPPStatic.widthCM",
+        "depth": "DPPStatic.depthCM",
         "productweight": "DPPStatic.weightGRM",
         "productmass": "DPPStatic.weightGRM",
         "totalproductweight": "DPPStatic.weightGRM",
@@ -100,6 +105,10 @@ _ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
     },
     # Product scope: part-level static fields.
     ("product", "PartStatic"): {
+        "weight": "PartStatic.weightGRM",
+        "height": "PartStatic.heightCM",
+        "width": "PartStatic.widthCM",
+        "depth": "PartStatic.depthCM",
         "partweight": "PartStatic.weightGRM",
         "partmass": "PartStatic.weightGRM",
         "componentweight": "PartStatic.weightGRM",
@@ -113,6 +122,7 @@ _ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
     },
     # Product scope: material instance fields.
     ("product", "MaterialInstance"): {
+        "weight": "MaterialInstance.weightGRM",
         "materialweight": "MaterialInstance.weightGRM",
         "materialmass": "MaterialInstance.weightGRM",
         "rawmaterialweight": "MaterialInstance.weightGRM",

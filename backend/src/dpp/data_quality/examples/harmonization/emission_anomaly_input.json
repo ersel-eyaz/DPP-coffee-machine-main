@@ -4,141 +4,116 @@
   },
   "@graph": [
     {
-      "@id": "activity-negative-001",
-      "@type": "dpp:ActivityData",
-      "dpp:quantity": {
-        "value": -10,
-        "unit": "km"
-      },
-      "dpp:unit": "km"
-    },
-    {
-      "@id": "factor-valid-001",
-      "@type": "dpp:EmissionFactor",
-      "dpp:value": 0.1,
-      "dpp:unit": "kgCO2e/km"
-    },
-    {
       "@id": "record-scope3-missing-category-001",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:emissions_kg_co2e": {
+      "dpp:emissionsKgCO2e": {
         "value": -1,
         "unit": "kgCO2e"
       },
       "dpp:scope": "scope 3",
       "dpp:activity": {
-        "@id": "activity-negative-001"
+        "@type": "dpp:ActivityData",
+        "dpp:quantity": {
+          "value": -10,
+          "unit": "km"
+        },
+        "dpp:unit": "km"
       },
-      "dpp:emission_factor": {
-        "@id": "factor-valid-001"
+      "dpp:emissionFactor": {
+        "@type": "dpp:EmissionFactor",
+        "dpp:value": 0.1,
+        "dpp:unit": "kgCO2e/km"
       }
-    },
-    {
-      "@id": "activity-valid-001",
-      "@type": "dpp:ActivityData",
-      "dpp:quantity": {
-        "value": 25,
-        "unit": "km"
-      },
-      "dpp:unit": "km"
-    },
-    {
-      "@id": "factor-negative-001",
-      "@type": "dpp:EmissionFactor",
-      "dpp:value": -0.2,
-      "dpp:unit": "kgCO2e/km"
     },
     {
       "@id": "record-scope1-with-category-001",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:emissions_kg_co2e": {
+      "dpp:emissionsKgCO2e": {
         "value": 5,
         "unit": "kgCO2e"
       },
       "dpp:scope": "scope 1",
-      "dpp:scope3_category": "purchased goods and services",
+      "dpp:scope3Category": "purchased goods and services",
       "dpp:activity": {
-        "@id": "activity-valid-001"
+        "@type": "dpp:ActivityData",
+        "dpp:quantity": {
+          "value": 25,
+          "unit": "km"
+        },
+        "dpp:unit": "km"
       },
-      "dpp:emission_factor": {
-        "@id": "factor-negative-001"
+      "dpp:emissionFactor": {
+        "@type": "dpp:EmissionFactor",
+        "dpp:value": -0.2,
+        "dpp:unit": "kgCO2e/km"
       }
-    },
-    {
-      "@id": "activity-electricity-with-distance-factor-001",
-      "@type": "dpp:ActivityData",
-      "dpp:quantity": {
-        "value": 10,
-        "unit": "kWh"
-      },
-      "dpp:unit": "kWh"
-    },
-    {
-      "@id": "factor-distance-for-electricity-001",
-      "@type": "dpp:EmissionFactor",
-      "dpp:value": 0.2,
-      "dpp:unit": "kgCO2e/km"
     },
     {
       "@id": "record-unit-incompatible-001",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:emissions_kg_co2e": {
+      "dpp:emissionsKgCO2e": {
         "value": 2,
         "unit": "kgCO2e"
       },
       "dpp:scope": "scope 2",
       "dpp:activity": {
-        "@id": "activity-electricity-with-distance-factor-001"
+        "@type": "dpp:ActivityData",
+        "dpp:quantity": {
+          "value": 10,
+          "unit": "kWh"
+        },
+        "dpp:unit": "kWh"
       },
-      "dpp:emission_factor": {
-        "@id": "factor-distance-for-electricity-001"
+      "dpp:emissionFactor": {
+        "@type": "dpp:EmissionFactor",
+        "dpp:value": 0.2,
+        "dpp:unit": "kgCO2e/km"
       }
-    },
-    {
-      "@id": "activity-zero-reported-001",
-      "@type": "dpp:ActivityData",
-      "dpp:quantity": {
-        "value": 12,
-        "unit": "kg"
-      },
-      "dpp:unit": "kg"
-    },
-    {
-      "@id": "factor-zero-reported-001",
-      "@type": "dpp:EmissionFactor",
-      "dpp:value": 0.8,
-      "dpp:unit": "kgCO2e/kg"
     },
     {
       "@id": "record-zero-reported-001",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:emissions_kg_co2e": {
+      "dpp:emissionsKgCO2e": {
         "value": 0,
         "unit": "kgCO2e"
       },
       "dpp:scope": "scope 3",
-      "dpp:scope3_category": "purchased goods and services",
+      "dpp:scope3Category": "purchased goods and services",
       "dpp:activity": {
-        "@id": "activity-zero-reported-001"
+        "@type": "dpp:ActivityData",
+        "dpp:quantity": {
+          "value": 12,
+          "unit": "kg"
+        },
+        "dpp:unit": "kg"
       },
-      "dpp:emission_factor": {
-        "@id": "factor-zero-reported-001"
+      "dpp:emissionFactor": {
+        "@type": "dpp:EmissionFactor",
+        "dpp:value": 0.8,
+        "dpp:unit": "kgCO2e/kg"
       }
     },
     {
       "@id": "record-zero-reported-duplicate-001",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:emissions_kg_co2e": {
+      "dpp:emissionsKgCO2e": {
         "value": 0,
         "unit": "kgCO2e"
       },
       "dpp:scope": "scope 3",
-      "dpp:scope3_category": "purchased goods and services",
+      "dpp:scope3Category": "purchased goods and services",
       "dpp:activity": {
-        "@id": "activity-zero-reported-001"
+        "@type": "dpp:ActivityData",
+        "dpp:quantity": {
+          "value": 12,
+          "unit": "kg"
+        },
+        "dpp:unit": "kg"
       },
-      "dpp:emission_factor": {
-        "@id": "factor-zero-reported-001"
+      "dpp:emissionFactor": {
+        "@type": "dpp:EmissionFactor",
+        "dpp:value": 0.8,
+        "dpp:unit": "kgCO2e/kg"
       }
     }
   ]

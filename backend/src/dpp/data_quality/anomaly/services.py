@@ -82,7 +82,7 @@ def _apply_numeric_range_rules(
     """Apply configured numeric range rules to harmonized fields."""
     findings: list[AnomalyFinding] = []
 
-    for entity in result.entities.values():
+    for entity in result.iter_entities():
         for rule in rules:
             if not rule.field_path.startswith(f"{entity.entity_type}."):
                 continue
@@ -119,19 +119,30 @@ def _relation_targets(entity: HarmonizedEntity, relation_name: str) -> list[str]
     ]
 
 
+def _embedded_children(entity: HarmonizedEntity, relation_name: str) -> list[HarmonizedEntity]:
+    """Return embedded children retained from the legacy-shaped model."""
+    return entity.embedded_entities.get(relation_name, [])
+
+
+def _single_embedded_child(entity: HarmonizedEntity, relation_name: str) -> HarmonizedEntity | None:
+    """Return one embedded child when the legacy model defines one object."""
+    children = _embedded_children(entity, relation_name)
+    return children[0] if children else None
+
+
 def _apply_required_relation_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
-    """Check required model-near links and dangling preserved references."""
+    """Check required embedded properties and true reference targets."""
     scope = SUPPORTED_SCOPES[result.scope_name]
     findings: list[AnomalyFinding] = []
     relations_by_source: dict[str, list[CanonicalRelation]] = {}
     for relation in scope.relations:
         relations_by_source.setdefault(relation.source_entity_type, []).append(relation)
 
-    for entity in result.entities.values():
+    for entity in result.iter_entities():
         configured_relations = relations_by_source.get(entity.entity_type, [])
 
         for relation in entity.relations:
-            if relation.target_entity_id not in result.entities:
+            if result.find_entity(relation.target_entity_id) is None:
                 findings.append(
                     AnomalyFinding(
                         check_id="dangling_relation_target",
@@ -154,16 +165,23 @@ def _apply_required_relation_checks(result: HarmonizationResult) -> list[Anomaly
             if not relation.required:
                 continue
 
-            targets = _relation_targets(entity, relation.relation_name)
-            if targets:
+            if relation.representation == "embedded":
+                present = bool(_embedded_children(entity, relation.relation_name))
+            else:
+                present = bool(_relation_targets(entity, relation.relation_name))
+            if present:
                 continue
 
             findings.append(
                 AnomalyFinding(
-                    check_id="missing_required_relation",
+                    check_id=(
+                        "missing_required_embedded_object"
+                        if relation.representation == "embedded"
+                        else "missing_required_relation"
+                    ),
                     category="relationship",
                     severity="warning",
-                    message=f"Required relation {relation.path} is missing.",
+                    message=f"Required structural property {relation.path} is missing.",
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
                     relation_path=relation.path,
@@ -178,7 +196,7 @@ def _apply_required_relation_checks(result: HarmonizationResult) -> list[Anomaly
 
 def _first_entity_by_type(result: HarmonizationResult, entity_type: str) -> HarmonizedEntity | None:
     """Return the first harmonized entity of a given type."""
-    for entity in result.entities.values():
+    for entity in result.iter_entities():
         if entity.entity_type == entity_type:
             return entity
     return None
@@ -196,7 +214,7 @@ def _part_static_weight(result: HarmonizationResult, part_instance: HarmonizedEn
     if part_static_id is None:
         return None, None
 
-    part_static = result.entities.get(part_static_id)
+    part_static = result.find_entity(part_static_id)
     if part_static is None:
         return part_static_id, None
 
@@ -207,10 +225,10 @@ def _apply_material_weight_consistency_checks(result: HarmonizationResult) -> li
     """Compare each part's material composition weight with its linked static part weight."""
     findings: list[AnomalyFinding] = []
 
-    for part_instance in [entity for entity in result.entities.values() if entity.entity_type == "PartInstance"]:
+    for part_instance in [entity for entity in result.iter_entities() if entity.entity_type == "PartInstance"]:
         part_static_id, part_weight = _part_static_weight(result, part_instance)
-        material_ids = _relation_targets(part_instance, "compositeMaterials")
-        if part_weight is None or not material_ids:
+        materials = _embedded_children(part_instance, "compositeMaterials")
+        if part_weight is None or not materials:
             continue
 
         material_weights: list[float] = []
@@ -218,18 +236,17 @@ def _apply_material_weight_consistency_checks(result: HarmonizationResult) -> li
         missing_material_ids: list[str] = []
         missing_weight_material_ids: list[str] = []
 
-        for material_id in material_ids:
-            material = result.entities.get(material_id)
-            if material is None or material.entity_type != "MaterialInstance":
-                missing_material_ids.append(material_id)
+        for material in materials:
+            if material.entity_type != "MaterialInstance":
+                missing_material_ids.append(material.entity_id)
                 continue
 
             material_weight = _numeric_field_value(material, "MaterialInstance.weightGRM")
             if material_weight is None:
-                missing_weight_material_ids.append(material_id)
+                missing_weight_material_ids.append(material.entity_id)
                 continue
 
-            material_ids_with_weight.append(material_id)
+            material_ids_with_weight.append(material.entity_id)
             material_weights.append(material_weight)
 
         total_material_weight = sum(material_weights)
@@ -281,34 +298,37 @@ def _active_part_tree_weight_summary(
     leaf_weights: list[float] = []
     missing_weight_part_ids: list[str] = []
 
-    def walk(part_id: str) -> None:
-        if part_id in visited:
-            cycle_part_ids.add(part_id)
+    def walk(entity: HarmonizedEntity) -> None:
+        if entity.entity_id in visited:
+            cycle_part_ids.add(entity.entity_id)
             return
 
-        visited.add(part_id)
-        entity = result.entities.get(part_id)
-        if entity is None or entity.entity_type != "PartInstance":
-            missing_part_ids.add(part_id)
+        visited.add(entity.entity_id)
+        if entity.entity_type != "PartInstance":
+            missing_part_ids.add(entity.entity_id)
             return
 
-        detached_part_ids.update(_relation_targets(entity, "historyOfDetachedParts"))
-        child_ids = _relation_targets(entity, "compositeParts")
-        if child_ids:
-            for child_id in child_ids:
-                walk(child_id)
+        detached_part_ids.update(child.entity_id for child in _embedded_children(entity, "historyOfDetachedParts"))
+        children = _embedded_children(entity, "compositeParts")
+        if children:
+            for child in children:
+                walk(child)
             return
 
-        leaf_part_ids.append(part_id)
+        leaf_part_ids.append(entity.entity_id)
         part_static_id, weight = _part_static_weight(result, entity)
         if part_static_id is not None:
             leaf_static_ids.append(part_static_id)
         if weight is None:
-            missing_weight_part_ids.append(part_id)
+            missing_weight_part_ids.append(entity.entity_id)
             return
         leaf_weights.append(weight)
 
-    walk(root_part_id)
+    root_part = result.find_entity(root_part_id)
+    if root_part is None:
+        missing_part_ids.add(root_part_id)
+    else:
+        walk(root_part)
     return {
         "total_weight": sum(leaf_weights),
         "leaf_part_ids": leaf_part_ids,
@@ -326,13 +346,13 @@ def _apply_active_part_tree_weight_checks(result: HarmonizationResult) -> list[A
     """Compare active leaf-part tree weight with the linked product weight."""
     findings: list[AnomalyFinding] = []
 
-    for dpp_instance in [entity for entity in result.entities.values() if entity.entity_type == "DPPInstance"]:
+    for dpp_instance in [entity for entity in result.iter_entities() if entity.entity_type == "DPPInstance"]:
         dpp_static_id = _single_relation_target(dpp_instance, "dppStaticLink")
         root_part_id = _single_relation_target(dpp_instance, "partInstanceLink")
         if dpp_static_id is None or root_part_id is None:
             continue
 
-        dpp_static = result.entities.get(dpp_static_id)
+        dpp_static = result.find_entity(dpp_static_id)
         if dpp_static is None:
             continue
 
@@ -407,7 +427,7 @@ def _apply_product_usage_ratio_checks(result: HarmonizationResult) -> list[Anoma
     """Apply broad plausibility ratios for product usage counters."""
     findings: list[AnomalyFinding] = []
 
-    for dpp_instance in [entity for entity in result.entities.values() if entity.entity_type == "DPPInstance"]:
+    for dpp_instance in [entity for entity in result.iter_entities() if entity.entity_type == "DPPInstance"]:
         operating = _numeric_field_value(dpp_instance, "DPPInstance.operatingHRS")
         brewing = _numeric_field_value(dpp_instance, "DPPInstance.brewingCount")
         cleaning = _numeric_field_value(dpp_instance, "DPPInstance.cleaningCount")
@@ -480,7 +500,7 @@ def _apply_product_consistency_checks(result: HarmonizationResult) -> list[Anoma
     if dpp_static is not None:
         product_weight = _numeric_field_value(dpp_static, "DPPStatic.weightGRM")
         if product_weight is not None:
-            for part_static in [entity for entity in result.entities.values() if entity.entity_type == "PartStatic"]:
+            for part_static in [entity for entity in result.iter_entities() if entity.entity_type == "PartStatic"]:
                 part_weight = _numeric_field_value(part_static, "PartStatic.weightGRM")
                 if part_weight is None or part_weight <= product_weight * 1.05:
                     continue
@@ -500,7 +520,7 @@ def _apply_product_consistency_checks(result: HarmonizationResult) -> list[Anoma
                     )
                 )
 
-    for dpp_instance in [entity for entity in result.entities.values() if entity.entity_type == "DPPInstance"]:
+    for dpp_instance in [entity for entity in result.iter_entities() if entity.entity_type == "DPPInstance"]:
         brewing = _numeric_field_value(dpp_instance, "DPPInstance.brewingCount")
         cleaning = _numeric_field_value(dpp_instance, "DPPInstance.cleaningCount")
         chalk = _numeric_field_value(dpp_instance, "DPPInstance.chalkCount")
@@ -559,7 +579,7 @@ def _apply_product_profile_checks(result: HarmonizationResult) -> list[AnomalyFi
     """Apply stricter product-specific ranges when a known product profile matches."""
     findings: list[AnomalyFinding] = []
 
-    for entity in [item for item in result.entities.values() if item.entity_type == "DPPStatic"]:
+    for entity in [item for item in result.iter_entities() if item.entity_type == "DPPStatic"]:
         profile_match = resolve_product_profile(_field_value(entity, "DPPStatic.name"))
         if profile_match is None:
             continue
@@ -618,14 +638,9 @@ def _apply_emission_calculation_checks(result: HarmonizationResult) -> list[Anom
     """Check whether reported emissions are plausible against activity and factor values."""
     findings: list[AnomalyFinding] = []
 
-    for record in [entity for entity in result.entities.values() if entity.entity_type == "GHGEmissionRecord"]:
-        activity_targets = _relation_targets(record, "activity")
-        factor_targets = _relation_targets(record, "emission_factor")
-        if not activity_targets or not factor_targets:
-            continue
-
-        activity = result.entities.get(activity_targets[0])
-        factor = result.entities.get(factor_targets[0])
+    for record in [entity for entity in result.iter_entities() if entity.entity_type == "GHGEmissionRecord"]:
+        activity = _single_embedded_child(record, "activity")
+        factor = _single_embedded_child(record, "emission_factor")
         if activity is None or factor is None:
             continue
 
@@ -693,13 +708,16 @@ def _apply_duplicate_emission_record_checks(result: HarmonizationResult) -> list
     """Flag possible duplicate GHG records with identical calculation signatures."""
     records_by_signature: dict[tuple[Any, ...], list[HarmonizedEntity]] = {}
 
-    for record in [entity for entity in result.entities.values() if entity.entity_type == "GHGEmissionRecord"]:
-        activity_id = _single_relation_target(record, "activity")
-        factor_id = _single_relation_target(record, "emission_factor")
+    for record in [entity for entity in result.iter_entities() if entity.entity_type == "GHGEmissionRecord"]:
+        activity = _single_embedded_child(record, "activity")
+        factor = _single_embedded_child(record, "emission_factor")
         reported = _numeric_field_value(record, "GHGEmissionRecord.emissions_kg_co2e")
         signature = (
-            activity_id,
-            factor_id,
+            _field_value(activity, "ActivityData.activity_type") if activity is not None else None,
+            _numeric_field_value(activity, "ActivityData.quantity") if activity is not None else None,
+            _field_value(activity, "ActivityData.unit") if activity is not None else None,
+            _numeric_field_value(factor, "EmissionFactor.value") if factor is not None else None,
+            _field_value(factor, "EmissionFactor.unit") if factor is not None else None,
             _field_value(record, "GHGEmissionRecord.scope"),
             _field_value(record, "GHGEmissionRecord.scope3_category"),
             reported,
@@ -711,7 +729,7 @@ def _apply_duplicate_emission_record_checks(result: HarmonizationResult) -> list
         if len(records) < 2:
             continue
 
-        activity_id, factor_id, scope_value, scope3_category, reported = signature
+        activity_type, quantity, activity_unit, factor_value, factor_unit, scope_value, scope3_category, reported = signature
         finding_record = records[0]
         findings.append(
             AnomalyFinding(
@@ -726,8 +744,15 @@ def _apply_duplicate_emission_record_checks(result: HarmonizationResult) -> list
                 expected="unique emission record or documented duplicate context",
                 evidence={
                     "duplicate_record_ids": [record.entity_id for record in records],
-                    "activity_entity_id": activity_id,
-                    "factor_entity_id": factor_id,
+                    "activity_signature": {
+                        "activity_type": activity_type,
+                        "quantity": quantity,
+                        "unit": activity_unit,
+                    },
+                    "factor_signature": {
+                        "value": factor_value,
+                        "unit": factor_unit,
+                    },
                     "scope": scope_value,
                     "scope3_category": scope3_category,
                     "record_count": len(records),
@@ -757,14 +782,9 @@ def _apply_emission_unit_compatibility_checks(result: HarmonizationResult) -> li
     """Check whether activity and emission-factor units are semantically compatible."""
     findings: list[AnomalyFinding] = []
 
-    for record in [entity for entity in result.entities.values() if entity.entity_type == "GHGEmissionRecord"]:
-        activity_targets = _relation_targets(record, "activity")
-        factor_targets = _relation_targets(record, "emission_factor")
-        if not activity_targets or not factor_targets:
-            continue
-
-        activity = result.entities.get(activity_targets[0])
-        factor = result.entities.get(factor_targets[0])
+    for record in [entity for entity in result.iter_entities() if entity.entity_type == "GHGEmissionRecord"]:
+        activity = _single_embedded_child(record, "activity")
+        factor = _single_embedded_child(record, "emission_factor")
         if activity is None or factor is None:
             continue
 
@@ -804,7 +824,7 @@ def _apply_emission_scope_category_checks(result: HarmonizationResult) -> list[A
     """Check categorical consistency between GHG scope and Scope 3 category."""
     findings: list[AnomalyFinding] = []
 
-    for record in [entity for entity in result.entities.values() if entity.entity_type == "GHGEmissionRecord"]:
+    for record in [entity for entity in result.iter_entities() if entity.entity_type == "GHGEmissionRecord"]:
         scope_value = _field_value(record, "GHGEmissionRecord.scope")
         scope3_category = _field_value(record, "GHGEmissionRecord.scope3_category")
 
@@ -881,7 +901,7 @@ def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyF
     findings: list[AnomalyFinding] = []
     applicable_by_concept = _concept_applicability_lookup()
 
-    for entity in result.entities.values():
+    for entity in result.iter_entities():
         if not entity.text_harmonization:
             continue
 

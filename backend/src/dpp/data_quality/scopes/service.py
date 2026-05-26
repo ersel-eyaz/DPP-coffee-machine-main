@@ -86,6 +86,7 @@ SERVICE_SCOPE = ScopeDefinition(
             source_entity_type="ReplaceServiceStep",
             relation_name="newPart",
             target_entity_type="PartInstance",
+            representation="embedded",
             required=False,
             description="Replacement part instance introduced by a replace service step.",
         ),

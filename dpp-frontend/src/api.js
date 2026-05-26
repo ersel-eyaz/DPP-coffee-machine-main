@@ -338,10 +338,15 @@ export const api = {
 
   /**
    * Run the isolated data-quality layer on an external JSON-LD document.
-   * @param {{scope: "product"|"emission"|"service", mode: "harmonization"|"anomaly"|"both", document: any}} body
+   * Local semantic-model initialization can make the first run noticeably slower.
+   * @param {{scope: "auto"|"product"|"emission"|"service", mode: "harmonization"|"anomaly"|"both", document: any}} body
    */
   runDataQuality(body) {
-    return postJSON(joinURL(API_BASE_URL, "/data-quality/run"), body);
+    return fetchJSON(
+      joinURL(API_BASE_URL, "/data-quality/run"),
+      { method: "POST", body: JSON.stringify(body) },
+      300000
+    );
   },
 
   listDataQualityExamples() {

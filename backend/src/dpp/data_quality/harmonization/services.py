@@ -29,7 +29,7 @@ from dpp.data_quality.harmonization.normalizers import (
     resolve_enum_value,
     resolve_unit_label,
 )
-from dpp.data_quality.harmonization.parser import ParsedEntity, parse_jsonld_document
+from dpp.data_quality.harmonization.parser import ParsedEntity, ParsedRelation, parse_jsonld_document
 from dpp.data_quality.harmonization.schemas import (
     HarmonizationIssue,
     HarmonizationResult,
@@ -44,6 +44,15 @@ from dpp.data_quality.scopes.schemas import CanonicalField, ScopeDefinition
 
 class HarmonizationServiceError(ValueError):
     """Raised when the harmonization service cannot run safely."""
+
+
+_RELATION_INPUT_ALIASES: dict[tuple[str, str], str] = {
+    ("DPPInstance", "isVariantOf"): "dppStaticLink",
+    ("DPPInstance", "hasPart"): "partInstanceLink",
+    ("PartInstance", "isVariantOf"): "partStaticLink",
+    ("MaterialInstance", "isVariantOf"): "materialStaticLink",
+    ("GHGEmissionRecord", "emissionFactor"): "emission_factor",
+}
 
 
 def _fields_by_path(scope: ScopeDefinition) -> dict[str, CanonicalField]:
@@ -69,30 +78,54 @@ def _target_type_for_relation(scope: ScopeDefinition, entity_type: str, relation
     return None
 
 
-def _build_preserved_relations(parsed_entity: ParsedEntity, scope: ScopeDefinition) -> list[PreservedRelation]:
-    """
-    Preserve trusted structural relations that are registered for the selected scope.
+def _canonical_relation_name(entity_type: str, relation_label: str) -> str:
+    """Translate a JSON-LD structural term to its model-side property name."""
+    return _RELATION_INPUT_ALIASES.get(
+        (entity_type, relation_label),
+        relation_label,
+    )
 
-    Relation labels are not harmonized. Only relations whose names are already
-    part of the selected scope are carried forward.
+
+def _relation_definition(scope: ScopeDefinition, entity_type: str, relation_name: str) -> Any | None:
+    """Return the selected-scope structural definition for one property."""
+    for relation in scope.relations:
+        if relation.source_entity_type == entity_type and relation.relation_name == relation_name:
+            return relation
+    return None
+
+
+def _build_preserved_relations(
+    parsed_entity: ParsedEntity,
+    scope: ScopeDefinition,
+    additional_relations: list[ParsedRelation] | None = None,
+) -> list[PreservedRelation]:
+    """
+    Preserve trusted reference relations registered for the selected scope.
+
+    Embedded structural properties are attached to their parent separately and
+    therefore are not represented here as id-based references.
     """
 
     allowed_relation_names = _relation_names_for_entity(scope, parsed_entity.entity_type)
     preserved: list[PreservedRelation] = []
 
-    for relation in parsed_entity.relations:
-        if relation.label not in allowed_relation_names:
+    for relation in [*parsed_entity.relations, *(additional_relations or [])]:
+        canonical_relation_name = _canonical_relation_name(parsed_entity.entity_type, relation.label)
+        relation_definition = _relation_definition(scope, parsed_entity.entity_type, canonical_relation_name)
+        if canonical_relation_name not in allowed_relation_names or relation_definition is None:
+            continue
+        if relation_definition.representation != "link":
             continue
 
         preserved.append(
             PreservedRelation(
                 source_entity_id=parsed_entity.entity_id,
-                relation_name=relation.label,
+                relation_name=canonical_relation_name,
                 target_entity_id=relation.target_id,
                 target_entity_type=_target_type_for_relation(
                     scope=scope,
                     entity_type=parsed_entity.entity_type,
-                    relation_name=relation.label,
+                    relation_name=canonical_relation_name,
                 ),
             )
         )
@@ -527,13 +560,49 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
 
     harmonized_entities: dict[str, HarmonizedEntity] = {}
     global_issues: list[HarmonizationIssue] = []
+    parsed_entities: dict[str, ParsedEntity] = {}
+    root_entity_ids: list[str] = []
+    embedded_children: dict[tuple[str, str], list[str]] = {}
+    inline_link_relations: dict[str, list[ParsedRelation]] = {}
+
+    def collect_parsed_entity(parsed_entity: ParsedEntity, *, as_root: bool) -> None:
+        """Collect a parsed tree while retaining embedded ownership information."""
+        parsed_entities[parsed_entity.entity_id] = parsed_entity
+        if as_root and parsed_entity.entity_id not in root_entity_ids:
+            root_entity_ids.append(parsed_entity.entity_id)
+
+        for embedded in parsed_entity.embedded_entities:
+            relation_name = _canonical_relation_name(parsed_entity.entity_type, embedded.label)
+            definition = _relation_definition(scope, parsed_entity.entity_type, relation_name)
+            if definition is None:
+                collect_parsed_entity(embedded.entity, as_root=True)
+                continue
+
+            if definition.representation == "embedded":
+                embedded_children.setdefault((parsed_entity.entity_id, relation_name), []).append(
+                    embedded.entity.entity_id
+                )
+                collect_parsed_entity(embedded.entity, as_root=False)
+                continue
+
+            inline_link_relations.setdefault(parsed_entity.entity_id, []).append(
+                ParsedRelation(label=relation_name, target_id=embedded.entity.entity_id)
+            )
+            collect_parsed_entity(embedded.entity, as_root=True)
 
     for parsed_entity in parsed_document.entities:
+        collect_parsed_entity(parsed_entity, as_root=True)
+
+    for parsed_entity in parsed_entities.values():
         fields: dict[str, HarmonizedField] = {}
         unmapped_fields: list[RawField] = []
         text_harmonization: dict[str, Any] = {}
         issues: list[HarmonizationIssue] = []
-        preserved_relations = _build_preserved_relations(parsed_entity, scope)
+        preserved_relations = _build_preserved_relations(
+            parsed_entity,
+            scope,
+            additional_relations=inline_link_relations.get(parsed_entity.entity_id),
+        )
         explicit_units = _collect_explicit_units(parsed_entity, scope_name)
 
         if parsed_entity.entity_type not in scope.entities:
@@ -745,7 +814,12 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                     value_method = unit_candidate.match_type
                 elif normalized_unit is not None:
                     value_confidence = unit_candidate.confidence if unit_candidate is not None else 1.0
-                    value_method = "unit_conversion"
+                    if normalized_value != value_for_normalization:
+                        value_method = "unit_conversion"
+                    elif original_unit != normalized_unit:
+                        value_method = "unit_normalization"
+                    else:
+                        value_method = "unit_validation"
 
                 if unit_candidate is not None and unit_candidate.match_type == "fuzzy":
                     issues.append(
@@ -795,6 +869,7 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
         harmonized_entities[parsed_entity.entity_id] = HarmonizedEntity(
             entity_id=parsed_entity.entity_id,
             entity_type=parsed_entity.entity_type,
+            has_explicit_id=parsed_entity.has_explicit_id,
             fields=fields,
             relations=preserved_relations,
             unmapped_fields=unmapped_fields,
@@ -802,8 +877,16 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
             issues=issues,
         )
 
+    def build_nested_entity(entity_id: str) -> HarmonizedEntity:
+        entity = harmonized_entities[entity_id]
+        nested: dict[str, list[HarmonizedEntity]] = {}
+        for (parent_id, relation_name), child_ids in embedded_children.items():
+            if parent_id == entity_id:
+                nested[relation_name] = [build_nested_entity(child_id) for child_id in child_ids]
+        return replace(entity, embedded_entities=nested)
+
     return HarmonizationResult(
         scope_name=scope_name,
-        entities=harmonized_entities,
+        entities={entity_id: build_nested_entity(entity_id) for entity_id in root_entity_ids},
         issues=global_issues,
     )

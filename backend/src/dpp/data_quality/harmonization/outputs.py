@@ -4,7 +4,8 @@ Output builders for harmonization results.
 The harmonization service keeps a detailed intermediate representation for
 traceability. This module derives two user-facing outputs from it:
 
-1. Clean JSON-LD data: only canonical entity fields and trusted references.
+1. Clean JSON-LD data: canonical entity fields with legacy-shaped embedded
+   children and preserved true references.
 2. Harmonization report: mapping/normalization metadata, confidence values,
    unmapped fields, and issues.
 """
@@ -18,14 +19,142 @@ from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
 
 
+DEFAULT_JSONLD_CONTEXT = {
+    "schema": "https://schema.org/",
+    "dpp": "https://example.org/dpp#",
+}
+
+_ENTITY_JSONLD_TYPES: dict[str, list[str]] = {
+    "DPPStatic": ["dpp:DPPStatic", "schema:ProductModel"],
+    "DPPInstance": ["dpp:DPPInstance", "schema:Product"],
+    "PartStatic": ["dpp:PartStatic", "schema:ProductModel"],
+    "PartInstance": ["dpp:PartInstance", "schema:Product"],
+    "MaterialStatic": ["dpp:MaterialStatic", "schema:ProductModel"],
+    "MaterialInstance": ["dpp:MaterialInstance", "schema:Product"],
+    "ActivityData": ["dpp:ActivityData"],
+    "EmissionFactor": ["dpp:EmissionFactor"],
+    "GHGEmissionRecord": ["dpp:GHGEmissionRecord"],
+    "SecondaryValueStep": ["dpp:SecondaryValueStep"],
+    "RepairServiceStep": ["dpp:RepairServiceStep", "schema:RepairAction"],
+    "ReplaceServiceStep": ["dpp:ReplaceServiceStep", "schema:UpdateAction"],
+    "CleaningServiceStep": ["dpp:CleaningServiceStep", "schema:CleanAction"],
+    "RefurbishmentServiceStep": ["dpp:RefurbishmentServiceStep", "schema:UpdateAction"],
+    "RemanufacturingServiceStep": ["dpp:RemanufacturingServiceStep", "schema:UpdateAction"],
+}
+
+_FIELD_JSONLD_TERMS: dict[str, str] = {
+    # Product fields with direct legacy JSON-LD counterparts.
+    "DPPStatic.name": "schema:name",
+    "DPPStatic.productClass": "schema:category",
+    "DPPStatic.weightGRM": "schema:weight",
+    "DPPStatic.heightCM": "schema:height",
+    "DPPStatic.widthCM": "schema:width",
+    "DPPStatic.depthCM": "schema:depth",
+    "PartStatic.weightGRM": "schema:weight",
+    "PartStatic.heightCM": "schema:height",
+    "PartStatic.widthCM": "schema:width",
+    "PartStatic.depthCM": "schema:depth",
+    "MaterialInstance.weightGRM": "schema:weight",
+    # Emission fields use the vocabulary terms already used by the legacy exporter.
+    "ActivityData.activity_type": "dpp:activityType",
+    "ActivityData.quantity": "dpp:quantity",
+    "ActivityData.unit": "dpp:unit",
+    "EmissionFactor.value": "dpp:value",
+    "EmissionFactor.unit": "dpp:unit",
+    "GHGEmissionRecord.scope": "dpp:scope",
+    "GHGEmissionRecord.scope3_category": "dpp:scope3Category",
+    "GHGEmissionRecord.emissions_kg_co2e": "dpp:emissionsKgCO2e",
+    "GHGEmissionRecord.calculation_method": "dpp:calculationMethod",
+    "GHGEmissionRecord.provenance": "dpp:provenance",
+    # Service fields with direct legacy JSON-LD counterparts.
+    "SecondaryValueStep.diagnose": "dpp:diagnose",
+    "SecondaryValueStep.observedSymptoms": "dpp:observedSymptoms",
+    "RepairServiceStep.diagnose": "dpp:diagnose",
+    "RepairServiceStep.observedSymptoms": "dpp:observedSymptoms",
+    "ReplaceServiceStep.diagnose": "dpp:diagnose",
+    "ReplaceServiceStep.observedSymptoms": "dpp:observedSymptoms",
+    "CleaningServiceStep.diagnose": "dpp:diagnose",
+    "CleaningServiceStep.observedSymptoms": "dpp:observedSymptoms",
+    "RefurbishmentServiceStep.diagnose": "dpp:diagnose",
+    "RefurbishmentServiceStep.observedSymptoms": "dpp:observedSymptoms",
+    "RemanufacturingServiceStep.diagnose": "dpp:diagnose",
+    "RemanufacturingServiceStep.observedSymptoms": "dpp:observedSymptoms",
+}
+
+_RELATION_JSONLD_TERMS: dict[tuple[str, str], str] = {
+    ("DPPInstance", "dppStaticLink"): "schema:isVariantOf",
+    ("DPPInstance", "partInstanceLink"): "schema:hasPart",
+    ("PartInstance", "partStaticLink"): "schema:isVariantOf",
+    ("PartInstance", "compositeParts"): "dpp:compositeParts",
+    ("PartInstance", "historyOfDetachedParts"): "dpp:historyOfDetachedParts",
+    ("PartInstance", "compositeMaterials"): "dpp:compositeMaterials",
+    ("MaterialInstance", "materialStaticLink"): "schema:isVariantOf",
+    ("GHGEmissionRecord", "activity"): "dpp:activity",
+    ("GHGEmissionRecord", "emission_factor"): "dpp:emissionFactor",
+    ("ReplaceServiceStep", "newPart"): "dpp:newPart",
+}
+
+_MEASUREMENT_JSONLD_TERMS: dict[str, tuple[str, str]] = {
+    "DPPStatic.weightGRM": ("weight", "GRM"),
+    "DPPStatic.heightCM": ("height", "CM"),
+    "DPPStatic.widthCM": ("width", "CM"),
+    "DPPStatic.depthCM": ("depth", "CM"),
+    "PartStatic.weightGRM": ("weight", "GRM"),
+    "PartStatic.heightCM": ("height", "CM"),
+    "PartStatic.widthCM": ("width", "CM"),
+    "PartStatic.depthCM": ("depth", "CM"),
+    "MaterialInstance.weightGRM": ("weight", "GRM"),
+}
+
+
 def _context_from_document(document: dict[str, Any]) -> Any:
-    """Return the input JSON-LD context, or a minimal fallback context."""
-    return document.get("@context", {"dpp": "https://example.org/dpp#"})
+    """Return an output context that preserves input terms and defines canonical prefixes."""
+    context = document.get("@context")
+    if isinstance(context, dict):
+        return {**context, **DEFAULT_JSONLD_CONTEXT}
+
+    if context is None:
+        return dict(DEFAULT_JSONLD_CONTEXT)
+
+    if isinstance(context, list):
+        return [*context, DEFAULT_JSONLD_CONTEXT]
+
+    return [context, DEFAULT_JSONLD_CONTEXT]
 
 
 def _field_name_from_path(canonical_path: str) -> str:
     """Return the field name from a canonical path such as 'ActivityData.quantity'."""
     return canonical_path.split(".", maxsplit=1)[1]
+
+
+def _jsonld_type(entity_type: str) -> str | list[str]:
+    """Return semantic output type(s), retaining the data-quality entity identity."""
+    mapped_types = _ENTITY_JSONLD_TYPES.get(entity_type)
+    if mapped_types is None:
+        return f"dpp:{entity_type}"
+
+    return mapped_types[0] if len(mapped_types) == 1 else mapped_types
+
+
+def _jsonld_field_term(canonical_path: str) -> str:
+    """Return the external JSON-LD property for an internal canonical field."""
+    return _FIELD_JSONLD_TERMS.get(canonical_path, f"dpp:{_field_name_from_path(canonical_path)}")
+
+
+def _jsonld_field_value(canonical_path: str, harmonized_field: Any) -> Any:
+    """Serialize measurement values like the legacy JSON-LD exporter where applicable."""
+    value = effective_field_value(harmonized_field)
+    measurement = _MEASUREMENT_JSONLD_TERMS.get(canonical_path)
+    if measurement is None:
+        return value
+
+    name, unit_code = measurement
+    return {
+        "@type": "schema:QuantitativeValue",
+        "schema:name": name,
+        "schema:value": value,
+        "schema:unitCode": unit_code,
+    }
 
 
 def _drop_none_values(value: Any) -> Any:
@@ -139,12 +268,22 @@ def _format_service_field_for_report(canonical_path: str, field_dict: dict[str, 
 
     return compact
 
+
+def _with_jsonld_term(canonical_path: str, field_dict: dict[str, Any]) -> dict[str, Any]:
+    """Expose the external clean-output term alongside the internal canonical path."""
+    return {
+        **field_dict,
+        "jsonld_term": _jsonld_field_term(canonical_path),
+    }
+
+
 def _add_preserved_references(node: dict[str, Any], entity: HarmonizedEntity) -> None:
     """
     Add trusted graph references as normal JSON-LD properties.
 
-    Relations are not emitted as a separate top-level 'relations' category in
-    clean output. They become ordinary reference fields on the source entity.
+    True references are not emitted as a separate top-level 'relations'
+    category. They become ordinary JSON-LD reference fields on the source
+    entity; embedded owned children are serialized separately below the parent.
     """
     grouped_references: dict[str, list[dict[str, str]]] = {}
 
@@ -154,10 +293,40 @@ def _add_preserved_references(node: dict[str, Any], entity: HarmonizedEntity) ->
         )
 
     for relation_name, references in grouped_references.items():
+        output_term = _RELATION_JSONLD_TERMS.get(
+            (entity.entity_type, relation_name),
+            f"dpp:{relation_name}",
+        )
         if len(references) == 1:
-            node[relation_name] = references[0]
+            node[output_term] = references[0]
         else:
-            node[relation_name] = references
+            node[output_term] = references
+
+
+def _build_clean_node(entity: HarmonizedEntity, *, embedded: bool = False) -> dict[str, Any]:
+    """Serialize one harmonized entity, recursively including owned children."""
+    node: dict[str, Any] = {"@type": _jsonld_type(entity.entity_type)}
+    if not embedded or entity.has_explicit_id:
+        node["@id"] = entity.entity_id
+
+    for canonical_path, harmonized_field in entity.fields.items():
+        if harmonized_field.status in {"error", "ambiguous", "unmapped"}:
+            continue
+        node[_jsonld_field_term(canonical_path)] = _jsonld_field_value(canonical_path, harmonized_field)
+
+    _add_preserved_references(node, entity)
+    for relation_name, children in entity.embedded_entities.items():
+        output_term = _RELATION_JSONLD_TERMS.get(
+            (entity.entity_type, relation_name),
+            f"dpp:{relation_name}",
+        )
+        serialized = [_build_clean_node(child, embedded=True) for child in children]
+        if relation_name in {"activity", "emission_factor", "newPart"} and len(serialized) == 1:
+            node[output_term] = serialized[0]
+        else:
+            node[output_term] = serialized
+
+    return node
 
 
 def build_clean_jsonld(result: HarmonizationResult, document: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -168,23 +337,7 @@ def build_clean_jsonld(result: HarmonizationResult, document: dict[str, Any] | N
     confidence scores, status flags, warnings, and issues. It is meant to be the
     normalized data payload for downstream processing.
     """
-    graph: list[dict[str, Any]] = []
-
-    for entity in result.entities.values():
-        node: dict[str, Any] = {
-            "@id": entity.entity_id,
-            "@type": entity.entity_type,
-        }
-
-        for canonical_path, harmonized_field in entity.fields.items():
-            if harmonized_field.status in {"error", "ambiguous", "unmapped"}:
-                continue
-
-            field_name = _field_name_from_path(canonical_path)
-            node[field_name] = effective_field_value(harmonized_field)
-
-        _add_preserved_references(node, entity)
-        graph.append(node)
+    graph = [_build_clean_node(entity) for entity in result.entities.values()]
 
     return {
         "@context": _context_from_document(document or {}),
@@ -221,13 +374,13 @@ def _build_report_summary(result: HarmonizationResult, report_entities: dict[str
     """
     entity_issues = [
         issue
-        for entity in result.entities.values()
+        for entity in result.iter_entities()
         for issue in entity.issues
     ]
     all_issues = [*result.issues, *entity_issues]
 
     field_status_counts: dict[str, int] = {}
-    for entity in result.entities.values():
+    for entity in result.iter_entities():
         for field in entity.fields.values():
             field_status_counts[field.status] = field_status_counts.get(field.status, 0) + 1
 
@@ -245,9 +398,9 @@ def _build_report_summary(result: HarmonizationResult, report_entities: dict[str
     }
 
     return {
-        "entities_total": len(result.entities),
-        "fields_total": sum(len(entity.fields) for entity in result.entities.values()),
-        "unmapped_fields_total": sum(len(entity.unmapped_fields) for entity in result.entities.values()),
+        "entities_total": sum(1 for _ in result.iter_entities()),
+        "fields_total": sum(len(entity.fields) for entity in result.iter_entities()),
+        "unmapped_fields_total": sum(len(entity.unmapped_fields) for entity in result.iter_entities()),
         "field_status_counts": field_status_counts,
         "text_harmonization_status_counts": text_status_counts,
         "issues_total": len(all_issues),
@@ -267,19 +420,28 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
     """
     report_entities: dict[str, Any] = {}
 
-    for entity_id, entity in result.entities.items():
+    for entity in result.iter_entities():
+        entity_id = entity.entity_id
         entity_dict = asdict(entity)
         entity_dict.pop("relations", None)
+        entity_dict.pop("embedded_entities", None)
+        entity_dict.pop("has_explicit_id", None)
 
         if result.scope_name == "service":
             entity_dict["fields"] = {
-                canonical_path: _format_service_field_for_report(canonical_path, field_dict)
+                canonical_path: _with_jsonld_term(
+                    canonical_path,
+                    _format_service_field_for_report(canonical_path, field_dict),
+                )
                 for canonical_path, field_dict in entity_dict.get("fields", {}).items()
                 if not _is_normalized_free_text_path(canonical_path)
             }
         else:
             entity_dict["fields"] = {
-                canonical_path: _format_measurement_field_for_report(field_dict)
+                canonical_path: _with_jsonld_term(
+                    canonical_path,
+                    _format_measurement_field_for_report(field_dict),
+                )
                 for canonical_path, field_dict in entity_dict.get("fields", {}).items()
             }
 

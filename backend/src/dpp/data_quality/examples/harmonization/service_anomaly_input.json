@@ -32,17 +32,14 @@
         "watery espresso"
       ],
       "replacedPartId": "part-burr-set-001",
-      "newPart": {
+      "dpp:newPart": {
         "@id": "part-burr-set-replacement-001",
-        "partStaticLink": {
+        "@type": "dpp:PartInstance",
+        "schema:isVariantOf": {
           "@id": "part-static-burr-set-001"
         }
       },
       "costEur": 89.0
-    },
-    {
-      "@id": "part-burr-set-replacement-001",
-      "@type": "dpp:PartInstance"
     }
   ]
 }

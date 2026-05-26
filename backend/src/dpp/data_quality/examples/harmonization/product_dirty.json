@@ -1,6 +1,7 @@
 {
   "@context": {
-    "dpp": "https://example.org/dpp#"
+    "dpp": "https://example.org/dpp#",
+    "schema": "https://schema.org/"
   },
   "@graph": [
     {
@@ -44,30 +45,27 @@
       }
     },
     {
-      "@id": "material-instance-001",
-      "@type": "dpp:MaterialInstance",
-      "dpp:materialMass": {
-        "value": 1.2,
-        "unit": "kg"
-      },
-      "dpp:recycledShare": {
-        "value": 30,
-        "unit": "percent"
-      },
-      "dpp:materialPurity": {
-        "value": 0.95,
-        "unit": "ratio"
-      }
-    },
-    {
       "@id": "part-instance-top-001",
       "@type": "dpp:PartInstance",
-      "dpp:partStaticLink": {
+      "schema:isVariantOf": {
         "@id": "part-static-top-001"
       },
       "dpp:compositeMaterials": [
         {
-          "@id": "material-instance-001"
+          "@id": "material-instance-001",
+          "@type": "dpp:MaterialInstance",
+          "dpp:materialMass": {
+            "value": 1.2,
+            "unit": "kg"
+          },
+          "dpp:recycledShare": {
+            "value": 30,
+            "unit": "percent"
+          },
+          "dpp:materialPurity": {
+            "value": 0.95,
+            "unit": "ratio"
+          }
         }
       ]
     },
@@ -82,10 +80,10 @@
       "dpp:cleaningCycles": 12,
       "dpp:descalingCycles": 3,
       "dpp:grinderCycles": 295,
-      "dpp:dppStaticLink": {
+      "schema:isVariantOf": {
         "@id": "dpp-static-001"
       },
-      "dpp:partInstanceLink": {
+      "schema:hasPart": {
         "@id": "part-instance-top-001"
       }
     }

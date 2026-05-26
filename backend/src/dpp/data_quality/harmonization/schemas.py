@@ -5,9 +5,9 @@ These schemas describe the output of parsing, label mapping, unit normalization,
 and controlled-vocabulary normalization. They are intentionally independent from
 the original Beanie document models.
 
-Entity types and structural relations are assumed to be reliable. Relations are
-therefore not harmonized; they are preserved so the intermediate representation
-keeps its graph structure for downstream anomaly detection.
+Entity types and structural relations are assumed to be reliable. The internal
+representation retains embedded children while true references are preserved
+as relations for downstream anomaly detection.
 """
 
 from __future__ import annotations
@@ -128,7 +128,9 @@ class HarmonizedEntity:
         entity_id: Input entity identifier, usually from '@id'.
         entity_type: Canonical entity type, usually derived from '@type'.
         fields: Harmonized fields keyed by canonical path.
-        relations: Trusted structural relations preserved from the input.
+        relations: Trusted reference relations preserved from the input.
+        embedded_entities: Owned child entities keyed by structural property,
+            such as ``activity`` or ``compositeParts``.
         unmapped_fields: Raw fields that could not be mapped.
         text_harmonization: Free-text concept normalization details, separated
             from structural field-label mapping.
@@ -137,8 +139,10 @@ class HarmonizedEntity:
 
     entity_id: str
     entity_type: str
+    has_explicit_id: bool = True
     fields: dict[str, HarmonizedField] = field(default_factory=dict)
     relations: list[PreservedRelation] = field(default_factory=list)
+    embedded_entities: dict[str, list["HarmonizedEntity"]] = field(default_factory=dict)
     unmapped_fields: list[RawField] = field(default_factory=list)
     text_harmonization: dict[str, Any] = field(default_factory=dict)
     issues: list[HarmonizationIssue] = field(default_factory=list)
@@ -159,6 +163,24 @@ class HarmonizationResult:
     entities: dict[str, HarmonizedEntity] = field(default_factory=dict)
     issues: list[HarmonizationIssue] = field(default_factory=list)
 
+    def iter_entities(self):
+        """Yield root and embedded entities in document order."""
+        def walk(entity: HarmonizedEntity):
+            yield entity
+            for children in entity.embedded_entities.values():
+                for child in children:
+                    yield from walk(child)
+
+        for entity in self.entities.values():
+            yield from walk(entity)
+
+    def find_entity(self, entity_id: str) -> HarmonizedEntity | None:
+        """Return a root or embedded entity by identifier."""
+        for entity in self.iter_entities():
+            if entity.entity_id == entity_id:
+                return entity
+        return None
+
     def has_errors(self) -> bool:
         """Return True if any global or entity-level issue has severity 'error'."""
         if any(issue.severity == "error" for issue in self.issues):
@@ -166,6 +188,6 @@ class HarmonizationResult:
 
         return any(
             issue.severity == "error"
-            for entity in self.entities.values()
+            for entity in self.iter_entities()
             for issue in entity.issues
         )

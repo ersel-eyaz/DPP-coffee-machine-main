@@ -51,6 +51,13 @@ function severityVariant(severity) {
   return "secondary";
 }
 
+function statusVariant(status) {
+  if (status === "error") return "danger";
+  if (status === "unmapped" || status === "ambiguous" || status === "unresolved") return "warning";
+  if (status === "mapped" || status === "normalized") return "success";
+  return "secondary";
+}
+
 function formatMethod(method, confidence) {
   if (!method) return "-";
   return typeof confidence === "number" ? `${method} (${confidence.toFixed(2)})` : method;
@@ -130,12 +137,12 @@ function SummaryBadges({ result, onBadgeClick }) {
                 as="button"
                 type="button"
                 className="dq-summary-badge"
-                bg="secondary"
-                title="Show fields changed by harmonization"
-                onClick={() => onBadgeClick?.("changed-fields")}
-              >
-                Changed fields {changedFields.length}
-              </Badge>
+              bg="secondary"
+              title="Show labels or values changed by harmonization"
+              onClick={() => onBadgeClick?.("changed-fields")}
+            >
+              Changed labels/values {changedFields.length}
+            </Badge>
             </Col>
           )}
           {(!serviceScope || harmonization.unmapped_fields_total > 0) && (
@@ -145,10 +152,10 @@ function SummaryBadges({ result, onBadgeClick }) {
                 type="button"
                 className="dq-summary-badge"
                 bg={harmonization.unmapped_fields_total ? "warning" : "success"}
-                title="Show unmapped fields"
+                title="Show input labels that could not be mapped to canonical fields"
                 onClick={() => onBadgeClick?.("unmapped")}
               >
-                Unmapped {harmonization.unmapped_fields_total ?? 0}
+                Unmapped labels {harmonization.unmapped_fields_total ?? 0}
               </Badge>
             </Col>
           )}
@@ -251,12 +258,33 @@ function stableJson(value) {
     .join(",")}}`;
 }
 
+function canonicalFieldLabel(field) {
+  return field.jsonld_term?.split(":").pop()
+    || field.canonical_path?.split(".").pop()
+    || field.canonical_path
+    || "-";
+}
+
+function fieldChangeTypes(field) {
+  if (field.status === "unmapped" || field.status === "error") return [];
+  const changes = [];
+  if (field.original_label && field.original_label !== canonicalFieldLabel(field)) changes.push("label");
+  if (
+    field.normalized_value !== undefined
+    && stableJson(field.original_value) !== stableJson(field.normalized_value)
+  ) {
+    changes.push("value");
+  }
+  return changes;
+}
+
 function isChangedField(field) {
-  if (field.status === "unmapped") return false;
-  if (field.status && field.status !== "mapped") return true;
-  if (field.value_method) return true;
-  if (field.normalized_value === undefined) return false;
-  return stableJson(field.original_value) !== stableJson(field.normalized_value);
+  return fieldChangeTypes(field).length > 0;
+}
+
+function changeLabel(field) {
+  const changes = fieldChangeTypes(field);
+  return changes.length ? changes.join(" + ") : "none";
 }
 
 function HarmonizationTable({ report }) {
@@ -268,18 +296,20 @@ function HarmonizationTable({ report }) {
   return (
     <Card>
       <Card.Header className="fw-semibold">Harmonization Fields</Card.Header>
-      <div className="table-responsive">
+      <div className="table-responsive dq-table-scroll">
         <Table size="sm" hover className="mb-0 align-middle">
           <thead>
             <tr>
               <th>Entity</th>
-              <th>Field</th>
-              <th>Changed</th>
+              <th>Input label</th>
+              <th>Output term</th>
+              <th>Canonical field</th>
+              <th>Changed part</th>
               <th>Status</th>
-              <th>Original</th>
-              <th>Normalized</th>
-              <th>Field method</th>
-              <th>Value method</th>
+              <th>Input value</th>
+              <th>Harmonized value</th>
+              <th>Label check</th>
+              <th>Value check</th>
             </tr>
           </thead>
           <tbody>
@@ -291,14 +321,16 @@ function HarmonizationTable({ report }) {
                     {row.entity_id}
                   </div>
                 </td>
+                <td>{row.original_label || "-"}</td>
+                <td>{row.jsonld_term || "-"}</td>
                 <td>{row.canonical_path}</td>
                 <td>
                   <Badge bg={isChangedField(row) ? "primary" : "secondary"}>
-                    {isChangedField(row) ? "yes" : "no"}
+                    {changeLabel(row)}
                   </Badge>
                 </td>
                 <td>
-                  <Badge bg={row.status === "unmapped" ? "warning" : "success"}>{row.status}</Badge>
+                  <Badge bg={statusVariant(row.status)}>{row.status}</Badge>
                 </td>
                 <td className="dq-json-cell">{prettyJson(row.original_value)}</td>
                 <td className="dq-json-cell">{row.normalized_value == null ? "-" : prettyJson(row.normalized_value)}</td>
@@ -426,8 +458,8 @@ function SummaryModal({ type, result, onHide }) {
 
   let title = "Summary";
   if (type === "entities") title = "Entities";
-  if (type === "changed-fields") title = "Changed Fields";
-  if (type === "unmapped") title = "Unmapped Fields";
+  if (type === "changed-fields") title = "Changed Labels / Values";
+  if (type === "unmapped") title = "Unmapped Labels";
   if (type === "harmonization-issues") title = "Harmonization Notes";
   if (type === "text-concepts") title = "Service Text Concepts";
   if (type === "controlled-values") title = "Controlled Vocabulary Values";
@@ -465,34 +497,60 @@ function SummaryModal({ type, result, onHide }) {
         )}
 
         {type === "changed-fields" && changedFields.length > 0 && (
-          <div className="table-responsive">
-            <Table size="sm" hover className="mb-0 align-middle">
-              <thead>
-                <tr>
-                  <th>Entity</th>
-                  <th>Field</th>
-                  <th>Status</th>
-                  <th>Field method</th>
-                  <th>Value method</th>
-                </tr>
-              </thead>
-              <tbody>
-                {changedFields.map((field, index) => (
-                  <tr key={`${field.entity_id}-${field.canonical_path}-${index}`}>
-                    <td>
-                      <div>{field.entity_type}</div>
-                      <div className="small text-muted">{field.entity_id}</div>
-                    </td>
-                    <td>{field.canonical_path}</td>
-                    <td>
-                      <Badge bg={field.status === "unmapped" ? "warning" : "success"}>{field.status}</Badge>
-                    </td>
-                    <td>{formatMethod(field.field_method || field.method, field.field_confidence ?? field.confidence)}</td>
-                    <td>{formatMethod(field.value_method, field.value_confidence)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+          <div className="d-flex flex-column gap-2">
+            {changedFields.map((field, index) => {
+              const changes = fieldChangeTypes(field);
+              return (
+                <Card key={`${field.entity_id}-${field.canonical_path}-${index}`} className="shadow-none">
+                  <Card.Body>
+                    <div className="d-flex flex-column flex-sm-row justify-content-between align-items-start gap-2 mb-3">
+                      <div>
+                        <div className="fw-semibold">{field.jsonld_term || field.canonical_path}</div>
+                        <div className="small text-muted">
+                          {field.entity_type} · {field.entity_id}
+                        </div>
+                      </div>
+                      <Badge bg="primary">{changeLabel(field)}</Badge>
+                    </div>
+
+                    {changes.includes("label") && (
+                      <Row className="g-2 mb-3">
+                        <Col xs={12} sm={6}>
+                          <div className="small text-muted">Input label</div>
+                          <div className="dq-diff-value">{field.original_label || "-"}</div>
+                        </Col>
+                        <Col xs={12} sm={6}>
+                          <div className="small text-muted">Output term</div>
+                          <div className="dq-diff-value">{field.jsonld_term || "-"}</div>
+                        </Col>
+                      </Row>
+                    )}
+
+                    {changes.includes("value") && (
+                      <Row className="g-2 mb-3">
+                        <Col xs={12} sm={6}>
+                          <div className="small text-muted">Input value</div>
+                          <div className="dq-json-cell dq-diff-value">{prettyJson(field.original_value)}</div>
+                        </Col>
+                        <Col xs={12} sm={6}>
+                          <div className="small text-muted">Harmonized value</div>
+                          <div className="dq-json-cell dq-diff-value">
+                            {field.normalized_value == null ? "-" : prettyJson(field.normalized_value)}
+                          </div>
+                        </Col>
+                      </Row>
+                    )}
+
+                    <div className="small text-muted">{field.canonical_path}</div>
+                    <div className="small mt-1">
+                      Label check: <span className="fw-semibold">{formatMethod(field.field_method || field.method, field.field_confidence ?? field.confidence)}</span>
+                      {" · "}
+                      Value check: <span className="fw-semibold">{formatMethod(field.value_method, field.value_confidence)}</span>
+                    </div>
+                  </Card.Body>
+                </Card>
+              );
+            })}
           </div>
         )}
 
@@ -528,7 +586,7 @@ function SummaryModal({ type, result, onHide }) {
             </div>
           ) : (
             <Alert variant="success" className="mb-0">
-              No unmapped fields.
+              No unmapped input labels.
             </Alert>
           )
         )}
@@ -603,31 +661,29 @@ function SummaryModal({ type, result, onHide }) {
 
         {type === "controlled-values" && (
           vocabularyFields.length ? (
-            <div className="table-responsive">
-              <Table size="sm" hover className="mb-0 align-middle">
-                <thead>
-                  <tr>
-                    <th>Field</th>
-                    <th>Original</th>
-                    <th>Normalized</th>
-                    <th>Status</th>
-                    <th>Value method</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {vocabularyFields.map((field, index) => (
-                    <tr key={`${field.entity_id}-${field.canonical_path}-${index}`}>
-                      <td>{field.canonical_path}</td>
-                      <td>{prettyJson(field.original_value)}</td>
-                      <td>{field.normalized_value == null ? "-" : prettyJson(field.normalized_value)}</td>
-                      <td>
-                        <Badge bg={field.status === "error" ? "danger" : "success"}>{field.status}</Badge>
-                      </td>
-                      <td>{formatMethod(field.value_method, field.value_confidence)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
+            <div className="d-flex flex-column gap-2">
+              {vocabularyFields.map((field, index) => (
+                <Card key={`${field.entity_id}-${field.canonical_path}-${index}`} className="shadow-none">
+                  <Card.Body>
+                    <div className="d-flex flex-column flex-sm-row justify-content-between align-items-start gap-2 mb-2">
+                      <div>
+                        <div className="fw-semibold text-break">{field.canonical_path}</div>
+                        <div className="small text-muted">Input label: {field.original_label || "-"}</div>
+                      </div>
+                      <Badge className="flex-shrink-0" bg={statusVariant(field.status)}>{field.status}</Badge>
+                    </div>
+                    <div className="small text-muted">Input value</div>
+                    <div className="dq-json-cell mb-2">{prettyJson(field.original_value)}</div>
+                    <div className="small text-muted">Harmonized value</div>
+                    <div className="dq-json-cell mb-2">
+                      {field.normalized_value == null ? "-" : prettyJson(field.normalized_value)}
+                    </div>
+                    <div className="small">
+                      Value check: <span className="fw-semibold">{formatMethod(field.value_method, field.value_confidence)}</span>
+                    </div>
+                  </Card.Body>
+                </Card>
+              ))}
             </div>
           ) : (
             <Alert variant="secondary" className="mb-0">

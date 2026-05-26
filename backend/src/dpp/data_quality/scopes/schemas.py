@@ -20,6 +20,7 @@ FieldRole = Literal[
     "free_text_harmonization",
     "analysis_context",
 ]
+StructuralRepresentation = Literal["link", "embedded"]
 
 
 @dataclass(frozen=True)
@@ -58,14 +59,14 @@ class CanonicalRelation:
     A trusted structural relation that should be preserved.
 
     Relations are not harmonized by the data quality layer. Entity typing and
-    relation structure are assumed to be reliable. These definitions only state
-    which relations should be carried into the intermediate representation so
-    downstream anomaly detection can use the graph context.
+    relation structure are assumed to be reliable. The representation flag
+    retains the legacy distinction between references and embedded children.
     """
 
     source_entity_type: str
     relation_name: str
     target_entity_type: str
+    representation: StructuralRepresentation = "link"
     is_collection: bool = False
     required: bool = False
     description: str = ""

@@ -1,6 +1,7 @@
 {
   "@context": {
-    "dpp": "https://example.org/dpp#"
+    "dpp": "https://example.org/dpp#",
+    "schema": "https://schema.org/"
   },
   "@graph": [
     {
@@ -86,56 +87,47 @@
       }
     },
     {
-      "@id": "material-instance-anomaly-001",
-      "@type": "dpp:MaterialInstance",
-      "dpp:materialMass": {
-        "value": 1.2,
-        "unit": "kg"
-      },
-      "dpp:recycledShare": {
-        "value": 125,
-        "unit": "percent"
-      },
-      "dpp:materialPurity": {
-        "value": 1.2,
-        "unit": "ratio"
-      }
-    },
-    {
       "@id": "part-instance-anomaly-001",
       "@type": "dpp:PartInstance",
-      "dpp:partStaticLink": {
+      "schema:isVariantOf": {
         "@id": "part-static-root-001"
       },
       "dpp:compositeParts": [
         {
-          "@id": "part-instance-heavy-001"
+          "@id": "part-instance-heavy-001",
+          "@type": "dpp:PartInstance",
+          "schema:isVariantOf": {
+            "@id": "part-static-heavy-001"
+          }
         }
       ],
       "dpp:historyOfDetachedParts": [
         {
-          "@id": "part-instance-detached-001"
+          "@id": "part-instance-detached-001",
+          "@type": "dpp:PartInstance",
+          "schema:isVariantOf": {
+            "@id": "part-static-detached-001"
+          }
         }
       ],
       "dpp:compositeMaterials": [
         {
-          "@id": "material-instance-anomaly-001"
+          "@id": "material-instance-anomaly-001",
+          "@type": "dpp:MaterialInstance",
+          "dpp:materialMass": {
+            "value": 1.2,
+            "unit": "kg"
+          },
+          "dpp:recycledShare": {
+            "value": 125,
+            "unit": "percent"
+          },
+          "dpp:materialPurity": {
+            "value": 1.2,
+            "unit": "ratio"
+          }
         }
       ]
-    },
-    {
-      "@id": "part-instance-heavy-001",
-      "@type": "dpp:PartInstance",
-      "dpp:partStaticLink": {
-        "@id": "part-static-heavy-001"
-      }
-    },
-    {
-      "@id": "part-instance-detached-001",
-      "@type": "dpp:PartInstance",
-      "dpp:partStaticLink": {
-        "@id": "part-static-detached-001"
-      }
     },
     {
       "@id": "dpp-instance-anomaly-001",
@@ -148,10 +140,10 @@
       "dpp:cleaningCycles": 140,
       "dpp:descalingCycles": 130,
       "dpp:grinderCycles": 30,
-      "dpp:dppStaticLink": {
+      "schema:isVariantOf": {
         "@id": "dpp-static-anomaly-001"
       },
-      "dpp:partInstanceLink": {
+      "schema:hasPart": {
         "@id": "part-instance-anomaly-001"
       }
     }

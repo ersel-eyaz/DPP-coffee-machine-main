@@ -24,6 +24,23 @@ def _field(path: str, value: object) -> HarmonizedField:
 
 
 class AnomalyServiceTests(unittest.TestCase):
+    def test_emission_missing_children_are_reported_as_embedded_objects(self) -> None:
+        result = HarmonizationResult(
+            scope_name="emission",
+            entities={
+                "record-001": HarmonizedEntity(
+                    entity_id="record-001",
+                    entity_type="GHGEmissionRecord",
+                )
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        check_ids = [finding.check_id for finding in anomaly.findings]
+
+        self.assertEqual(2, check_ids.count("missing_required_embedded_object"))
+        self.assertNotIn("dangling_relation_target", check_ids)
+
     def test_emission_calculation_mismatch(self) -> None:
         result = HarmonizationResult(
             scope_name="emission",
@@ -47,10 +64,18 @@ class AnomalyServiceTests(unittest.TestCase):
                             9.0,
                         ),
                     },
-                    relations=[
-                        PreservedRelation("record-001", "activity", "activity-001", "ActivityData"),
-                        PreservedRelation("record-001", "emission_factor", "factor-001", "EmissionFactor"),
-                    ],
+                    embedded_entities={
+                        "activity": [HarmonizedEntity(
+                            entity_id="record-001/activity",
+                            entity_type="ActivityData",
+                            fields={"ActivityData.quantity": _field("ActivityData.quantity", 10.0)},
+                        )],
+                        "emission_factor": [HarmonizedEntity(
+                            entity_id="record-001/emissionFactor",
+                            entity_type="EmissionFactor",
+                            fields={"EmissionFactor.value": _field("EmissionFactor.value", 0.5)},
+                        )],
+                    },
                 ),
             },
         )
@@ -91,10 +116,24 @@ class AnomalyServiceTests(unittest.TestCase):
                             5.0,
                         ),
                     },
-                    relations=[
-                        PreservedRelation("record-001", "activity", "activity-001", "ActivityData"),
-                        PreservedRelation("record-001", "emission_factor", "factor-001", "EmissionFactor"),
-                    ],
+                    embedded_entities={
+                        "activity": [HarmonizedEntity(
+                            entity_id="record-001/activity",
+                            entity_type="ActivityData",
+                            fields={
+                                "ActivityData.quantity": _field("ActivityData.quantity", 10.0),
+                                "ActivityData.unit": _field("ActivityData.unit", "kWh"),
+                            },
+                        )],
+                        "emission_factor": [HarmonizedEntity(
+                            entity_id="record-001/emissionFactor",
+                            entity_type="EmissionFactor",
+                            fields={
+                                "EmissionFactor.value": _field("EmissionFactor.value", 0.5),
+                                "EmissionFactor.unit": _field("EmissionFactor.unit", "kgCO2e/km"),
+                            },
+                        )],
+                    },
                 ),
             },
         )
@@ -131,10 +170,18 @@ class AnomalyServiceTests(unittest.TestCase):
                             0.0,
                         ),
                     },
-                    relations=[
-                        PreservedRelation("record-001", "activity", "activity-001", "ActivityData"),
-                        PreservedRelation("record-001", "emission_factor", "factor-001", "EmissionFactor"),
-                    ],
+                    embedded_entities={
+                        "activity": [HarmonizedEntity(
+                            entity_id="record-001/activity",
+                            entity_type="ActivityData",
+                            fields={"ActivityData.quantity": _field("ActivityData.quantity", 10.0)},
+                        )],
+                        "emission_factor": [HarmonizedEntity(
+                            entity_id="record-001/emissionFactor",
+                            entity_type="EmissionFactor",
+                            fields={"EmissionFactor.value": _field("EmissionFactor.value", 0.5)},
+                        )],
+                    },
                 ),
             },
         )
@@ -163,10 +210,18 @@ class AnomalyServiceTests(unittest.TestCase):
                             4.0,
                         ),
                     },
-                    relations=[
-                        PreservedRelation("record-001", "activity", "activity-001", "ActivityData"),
-                        PreservedRelation("record-001", "emission_factor", "factor-001", "EmissionFactor"),
-                    ],
+                    embedded_entities={
+                        "activity": [HarmonizedEntity(
+                            entity_id="record-001/activity",
+                            entity_type="ActivityData",
+                            fields={"ActivityData.quantity": _field("ActivityData.quantity", 10.0)},
+                        )],
+                        "emission_factor": [HarmonizedEntity(
+                            entity_id="record-001/emissionFactor",
+                            entity_type="EmissionFactor",
+                            fields={"EmissionFactor.value": _field("EmissionFactor.value", 0.4)},
+                        )],
+                    },
                 ),
                 "record-002": HarmonizedEntity(
                     entity_id="record-002",
@@ -182,10 +237,18 @@ class AnomalyServiceTests(unittest.TestCase):
                             4.0,
                         ),
                     },
-                    relations=[
-                        PreservedRelation("record-002", "activity", "activity-001", "ActivityData"),
-                        PreservedRelation("record-002", "emission_factor", "factor-001", "EmissionFactor"),
-                    ],
+                    embedded_entities={
+                        "activity": [HarmonizedEntity(
+                            entity_id="record-002/activity",
+                            entity_type="ActivityData",
+                            fields={"ActivityData.quantity": _field("ActivityData.quantity", 10.0)},
+                        )],
+                        "emission_factor": [HarmonizedEntity(
+                            entity_id="record-002/emissionFactor",
+                            entity_type="EmissionFactor",
+                            fields={"EmissionFactor.value": _field("EmissionFactor.value", 0.4)},
+                        )],
+                    },
                 ),
             },
         )
@@ -274,21 +337,19 @@ class AnomalyServiceTests(unittest.TestCase):
                 "part-instance-001": HarmonizedEntity(
                     entity_id="part-instance-001",
                     entity_type="PartInstance",
-                    relations=[
-                        PreservedRelation("part-instance-001", "partStaticLink", "part-static-001", "PartStatic"),
-                        PreservedRelation(
-                            "part-instance-001",
-                            "compositeMaterials",
-                            "material-001",
-                            "MaterialInstance",
+                    relations=[PreservedRelation("part-instance-001", "partStaticLink", "part-static-001", "PartStatic")],
+                    embedded_entities={"compositeMaterials": [
+                        HarmonizedEntity(
+                            entity_id="material-001",
+                            entity_type="MaterialInstance",
+                            fields={"MaterialInstance.weightGRM": _field("MaterialInstance.weightGRM", 700.0)},
                         ),
-                        PreservedRelation(
-                            "part-instance-001",
-                            "compositeMaterials",
-                            "material-002",
-                            "MaterialInstance",
+                        HarmonizedEntity(
+                            entity_id="material-002",
+                            entity_type="MaterialInstance",
+                            fields={"MaterialInstance.weightGRM": _field("MaterialInstance.weightGRM", 500.0)},
                         ),
-                    ],
+                    ]},
                 ),
             },
         )
@@ -326,16 +387,19 @@ class AnomalyServiceTests(unittest.TestCase):
                 "root-part-001": HarmonizedEntity(
                     entity_id="root-part-001",
                     entity_type="PartInstance",
-                    relations=[
-                        PreservedRelation("root-part-001", "partStaticLink", "root-static-001", "PartStatic"),
-                        PreservedRelation("root-part-001", "compositeParts", "child-part-001", "PartInstance"),
-                        PreservedRelation(
-                            "root-part-001",
-                            "historyOfDetachedParts",
-                            "detached-part-001",
-                            "PartInstance",
-                        ),
-                    ],
+                    relations=[PreservedRelation("root-part-001", "partStaticLink", "root-static-001", "PartStatic")],
+                    embedded_entities={
+                        "compositeParts": [HarmonizedEntity(
+                            entity_id="child-part-001",
+                            entity_type="PartInstance",
+                            relations=[PreservedRelation("child-part-001", "partStaticLink", "child-static-001", "PartStatic")],
+                        )],
+                        "historyOfDetachedParts": [HarmonizedEntity(
+                            entity_id="detached-part-001",
+                            entity_type="PartInstance",
+                            relations=[PreservedRelation("detached-part-001", "partStaticLink", "detached-static-001", "PartStatic")],
+                        )],
+                    },
                 ),
                 "child-part-001": HarmonizedEntity(
                     entity_id="child-part-001",
@@ -425,7 +489,7 @@ class AnomalyServiceTests(unittest.TestCase):
                     "diagnose": "dull burrs",
                     "observedSymptoms": ["watery espresso"],
                     "replacedPartId": "part-old-001",
-                    "newPart": {"@id": "part-new-001"},
+                    "newPart": {"@id": "part-new-001", "@type": "dpp:PartInstance"},
                     "costEur": 89.0,
                 }
             ],
@@ -439,7 +503,7 @@ class AnomalyServiceTests(unittest.TestCase):
             "part-old-001",
             entity.fields["ReplaceServiceStep.replacedPartId"].original_value,
         )
-        self.assertEqual(["part-new-001"], [relation.target_entity_id for relation in entity.relations])
+        self.assertEqual(["part-new-001"], [child.entity_id for child in entity.embedded_entities["newPart"]])
 
     def test_replaced_and_new_parts_pair_context_is_preserved(self) -> None:
         replaced_pairs = [["part-old-001", {"@id": "part-new-001"}]]

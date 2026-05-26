@@ -77,6 +77,17 @@ def _single_relation_target(entity: HarmonizedEntity, relation_name: str) -> str
     return targets[0] if targets else None
 
 
+def _embedded_children(entity: HarmonizedEntity, relation_name: str) -> list[HarmonizedEntity]:
+    """Return embedded owned children for one structural property."""
+    return entity.embedded_entities.get(relation_name, [])
+
+
+def _single_embedded_child(entity: HarmonizedEntity, relation_name: str) -> HarmonizedEntity | None:
+    """Return one embedded owned child where the model expects a singleton."""
+    children = _embedded_children(entity, relation_name)
+    return children[0] if children else None
+
+
 def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
     """Return numerator / denominator when the denominator is positive."""
     if numerator is None or denominator is None or denominator <= 0:
@@ -103,7 +114,7 @@ def _part_static_weight(result: HarmonizationResult, part_instance: HarmonizedEn
     if part_static_id is None:
         return None, None
 
-    part_static = result.entities.get(part_static_id)
+    part_static = result.find_entity(part_static_id)
     if part_static is None:
         return part_static_id, None
 
@@ -120,33 +131,36 @@ def _active_leaf_part_weight_summary(result: HarmonizationResult, root_part_id: 
     missing_part_ids: set[str] = set()
     missing_weight_part_ids: list[str] = []
 
-    def walk(part_id: str) -> None:
-        if part_id in visited:
+    def walk(part: HarmonizedEntity) -> None:
+        if part.entity_id in visited:
             return
 
-        visited.add(part_id)
-        part = result.entities.get(part_id)
-        if part is None or part.entity_type != "PartInstance":
-            missing_part_ids.add(part_id)
+        visited.add(part.entity_id)
+        if part.entity_type != "PartInstance":
+            missing_part_ids.add(part.entity_id)
             return
 
-        detached_part_ids.update(_relation_targets(part, "historyOfDetachedParts"))
-        child_ids = _relation_targets(part, "compositeParts")
-        if child_ids:
-            for child_id in child_ids:
-                walk(child_id)
+        detached_part_ids.update(child.entity_id for child in _embedded_children(part, "historyOfDetachedParts"))
+        children = _embedded_children(part, "compositeParts")
+        if children:
+            for child in children:
+                walk(child)
             return
 
-        leaf_part_ids.append(part_id)
+        leaf_part_ids.append(part.entity_id)
         part_static_id, weight = _part_static_weight(result, part)
         if part_static_id is not None:
             leaf_static_ids.append(part_static_id)
         if weight is None:
-            missing_weight_part_ids.append(part_id)
+            missing_weight_part_ids.append(part.entity_id)
             return
         leaf_weights.append(weight)
 
-    walk(root_part_id)
+    root_part = result.find_entity(root_part_id)
+    if root_part is None:
+        missing_part_ids.add(root_part_id)
+    else:
+        walk(root_part)
     return {
         "total_weight": sum(leaf_weights),
         "leaf_part_ids": leaf_part_ids,
@@ -165,23 +179,22 @@ def _material_weight_ratio_summary(result: HarmonizationResult) -> dict[str, Any
     part_ids: list[str] = []
     material_ids_by_part: dict[str, list[str]] = {}
 
-    for part in [entity for entity in result.entities.values() if entity.entity_type == "PartInstance"]:
+    for part in [entity for entity in result.iter_entities() if entity.entity_type == "PartInstance"]:
         _, part_weight = _part_static_weight(result, part)
-        material_ids = _relation_targets(part, "compositeMaterials")
-        if part_weight is None or part_weight <= 0 or not material_ids:
+        materials = _embedded_children(part, "compositeMaterials")
+        if part_weight is None or part_weight <= 0 or not materials:
             continue
 
         material_weights: list[float] = []
         material_ids_with_weight: list[str] = []
-        for material_id in material_ids:
-            material = result.entities.get(material_id)
-            if material is None or material.entity_type != "MaterialInstance":
+        for material in materials:
+            if material.entity_type != "MaterialInstance":
                 continue
             weight = _numeric_field_value(material, "MaterialInstance.weightGRM")
             if weight is None:
                 continue
             material_weights.append(weight)
-            material_ids_with_weight.append(material_id)
+            material_ids_with_weight.append(material.entity_id)
 
         if not material_weights:
             continue
@@ -202,7 +215,7 @@ def _extract_product_feature_rows(result: HarmonizationResult) -> list[FeatureRo
     rows: list[FeatureRow] = []
     material_summary = _material_weight_ratio_summary(result)
 
-    for instance in [entity for entity in result.entities.values() if entity.entity_type == "DPPInstance"]:
+    for instance in [entity for entity in result.iter_entities() if entity.entity_type == "DPPInstance"]:
         features: dict[str, float] = {}
         missing: list[str] = []
         evidence: dict[str, Any] = {}
@@ -233,7 +246,7 @@ def _extract_product_feature_rows(result: HarmonizationResult) -> list[FeatureRo
         product_weight = None
         if dpp_static_id is not None:
             source_ids.append(dpp_static_id)
-            dpp_static = result.entities.get(dpp_static_id)
+            dpp_static = result.find_entity(dpp_static_id)
             if dpp_static is not None:
                 product_weight = _numeric_field_value(dpp_static, "DPPStatic.weightGRM")
 
@@ -296,16 +309,16 @@ def _extract_emission_feature_rows(result: HarmonizationResult) -> list[FeatureR
     """Extract calculation and intensity features from GHGEmissionRecord entities."""
     rows: list[FeatureRow] = []
 
-    for record in [entity for entity in result.entities.values() if entity.entity_type == "GHGEmissionRecord"]:
+    for record in [entity for entity in result.iter_entities() if entity.entity_type == "GHGEmissionRecord"]:
         features: dict[str, float] = {}
         missing: list[str] = []
         evidence: dict[str, Any] = {}
         source_ids = [record.entity_id]
 
-        activity_id = _single_relation_target(record, "activity")
-        factor_id = _single_relation_target(record, "emission_factor")
-        activity = result.entities.get(activity_id) if activity_id is not None else None
-        factor = result.entities.get(factor_id) if factor_id is not None else None
+        activity = _single_embedded_child(record, "activity")
+        factor = _single_embedded_child(record, "emission_factor")
+        activity_id = activity.entity_id if activity is not None else None
+        factor_id = factor.entity_id if factor is not None else None
 
         if activity_id is not None:
             source_ids.append(activity_id)
