@@ -170,6 +170,36 @@ def _normalize_nested_value(value: Any) -> Any:
     return {"value": scalar_value, "unit": unit}
 
 
+def _extract_legacy_container_fields(label: str, value: Any) -> list[ParsedField]:
+    """Read scoped scalar values that the prototype exporter wraps in schema containers."""
+    if label == "additionalProperty" and isinstance(value, list):
+        fields: list[ParsedField] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            if _strip_namespace(str(item.get("@type", ""))) != "PropertyValue":
+                continue
+            name = item.get("name", item.get("schema:name"))
+            scalar_value = item.get("value", item.get("schema:value"))
+            if not isinstance(name, str) or scalar_value is None:
+                continue
+            unit_code = item.get("unitCode", item.get("schema:unitCode"))
+            raw_value = (
+                {"value": scalar_value, "unit": unit_code}
+                if isinstance(unit_code, str)
+                else scalar_value
+            )
+            fields.append(ParsedField(label=name, value=raw_value))
+        return fields
+
+    if label == "priceSpecification" and isinstance(value, dict):
+        price = value.get("schema:price", value.get("price"))
+        if price is not None:
+            return [ParsedField(label="costEur", value=price)]
+
+    return []
+
+
 def _parse_graph_node(node: Any, *, fallback_id: str) -> ParsedEntity:
     """Parse one root or embedded typed node."""
     if not isinstance(node, dict):
@@ -187,6 +217,11 @@ def _parse_graph_node(node: Any, *, fallback_id: str) -> ParsedEntity:
             continue
 
         label = _strip_namespace(raw_label)
+        legacy_container_fields = _extract_legacy_container_fields(label, value)
+        if legacy_container_fields:
+            fields.extend(legacy_container_fields)
+            continue
+
         normalized_value = _normalize_nested_value(value)
         if normalized_value is not value:
             fields.append(ParsedField(label=label, value=normalized_value))

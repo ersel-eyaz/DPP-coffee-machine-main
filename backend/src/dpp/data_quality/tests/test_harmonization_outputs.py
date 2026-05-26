@@ -64,18 +64,46 @@ class CleanJsonLdOutputTests(unittest.TestCase):
         self.assertEqual(
             {
                 "@type": "schema:QuantitativeValue",
-                "schema:name": "weight",
-                "schema:value": 2500.0,
-                "schema:unitCode": "GRM",
+                "name": "weight",
+                "value": 2500.0,
+                "unitCode": "GRM",
             },
             product["schema:weight"],
         )
-        self.assertEqual({"@id": "dpp-static-001"}, instance["schema:isVariantOf"])
+        self.assertEqual({"@id": "dpp-static-001"}, instance["isVariantOf"])
         self.assertEqual({"@id": "part-instance-top-001"}, instance["schema:hasPart"])
+        additional_properties = {
+            item["name"]: item for item in instance["schema:additionalProperty"]
+        }
+        self.assertEqual(120.0, additional_properties["operatingHRS"]["value"])
+        self.assertEqual("HRS", additional_properties["operatingHRS"]["unitCode"])
+        self.assertEqual(300.0, additional_properties["brewingCount"]["value"])
+        self.assertEqual(12.0, additional_properties["cleaningCount"]["value"])
+        self.assertEqual(3.0, additional_properties["chalkCount"]["value"])
+        self.assertEqual(295.0, additional_properties["coffeeGrindingCount"]["value"])
+        self.assertNotIn("unitCode", additional_properties["brewingCount"])
+        self.assertNotIn("dpp:operatingHRS", instance)
+
+        material = output["@graph"][2]["dpp:compositeMaterials"][0]
+        self.assertEqual(
+            [
+                {
+                    "@type": "schema:PropertyValue",
+                    "name": "percentRecycled",
+                    "value": 30.0,
+                }
+            ],
+            material["additionalProperty"],
+        )
+        self.assertEqual(0.95, material["dpp:purityLevel"])
 
         roundtrip = harmonize_document(output, "product")
         roundtrip_instance = roundtrip.entities["dpp-instance-001"]
         roundtrip_part = roundtrip.entities["part-instance-top-001"]
+        self.assertEqual(
+            120.0,
+            roundtrip_instance.fields["DPPInstance.operatingHRS"].normalized_value,
+        )
         self.assertEqual(
             ["dppStaticLink", "partInstanceLink"],
             [relation.relation_name for relation in roundtrip_instance.relations],
@@ -85,6 +113,31 @@ class CleanJsonLdOutputTests(unittest.TestCase):
             [child.entity_id for child in roundtrip_part.embedded_entities["compositeMaterials"]],
         )
         self.assertEqual([], roundtrip.entities["dpp-static-001"].unmapped_fields)
+
+    def test_service_cost_output_uses_legacy_price_specification_container(self) -> None:
+        document = _load_example("service_anomaly_input.json")
+        result = harmonize_document(document, "service")
+
+        output = build_clean_jsonld(result, document=document)
+        replacement = _node_by_id(output, "service-anomaly-replace-001")
+
+        self.assertEqual(
+            {
+                "@type": "schema:PriceSpecification",
+                "schema:price": 89.0,
+                "schema:priceCurrency": "EUR",
+            },
+            replacement["priceSpecification"],
+        )
+        self.assertNotIn("dpp:costEur", replacement)
+
+        roundtrip = harmonize_document(output, "service")
+        self.assertEqual(
+            89.0,
+            roundtrip.entities["service-anomaly-replace-001"].fields[
+                "ReplaceServiceStep.costEur"
+            ].original_value,
+        )
 
     def test_output_context_defines_semantic_prefixes(self) -> None:
         document = _load_example("emission_dirty.json")

@@ -22,6 +22,12 @@ from dpp.data_quality.harmonization.schemas import HarmonizationResult, Harmoniz
 DEFAULT_JSONLD_CONTEXT = {
     "schema": "https://schema.org/",
     "dpp": "https://example.org/dpp#",
+    "name": "schema:name",
+    "value": "schema:value",
+    "unitCode": "schema:unitCode",
+    "additionalProperty": "schema:additionalProperty",
+    "isVariantOf": "schema:isVariantOf",
+    "priceSpecification": "schema:priceSpecification",
 }
 
 _ENTITY_JSONLD_TYPES: dict[str, list[str]] = {
@@ -55,6 +61,12 @@ _FIELD_JSONLD_TERMS: dict[str, str] = {
     "PartStatic.widthCM": "schema:width",
     "PartStatic.depthCM": "schema:depth",
     "MaterialInstance.weightGRM": "schema:weight",
+    "MaterialInstance.percentRecycled": "additionalProperty[percentRecycled]",
+    "DPPInstance.operatingHRS": "schema:additionalProperty[operatingHRS]",
+    "DPPInstance.brewingCount": "schema:additionalProperty[brewingCount]",
+    "DPPInstance.cleaningCount": "schema:additionalProperty[cleaningCount]",
+    "DPPInstance.chalkCount": "schema:additionalProperty[chalkCount]",
+    "DPPInstance.coffeeGrindingCount": "schema:additionalProperty[coffeeGrindingCount]",
     # Emission fields use the vocabulary terms already used by the legacy exporter.
     "ActivityData.activity_type": "dpp:activityType",
     "ActivityData.quantity": "dpp:quantity",
@@ -79,16 +91,22 @@ _FIELD_JSONLD_TERMS: dict[str, str] = {
     "RefurbishmentServiceStep.observedSymptoms": "dpp:observedSymptoms",
     "RemanufacturingServiceStep.diagnose": "dpp:diagnose",
     "RemanufacturingServiceStep.observedSymptoms": "dpp:observedSymptoms",
+    "SecondaryValueStep.costEur": "priceSpecification[schema:price]",
+    "RepairServiceStep.costEur": "priceSpecification[schema:price]",
+    "ReplaceServiceStep.costEur": "priceSpecification[schema:price]",
+    "CleaningServiceStep.costEur": "priceSpecification[schema:price]",
+    "RefurbishmentServiceStep.costEur": "priceSpecification[schema:price]",
+    "RemanufacturingServiceStep.costEur": "priceSpecification[schema:price]",
 }
 
 _RELATION_JSONLD_TERMS: dict[tuple[str, str], str] = {
-    ("DPPInstance", "dppStaticLink"): "schema:isVariantOf",
+    ("DPPInstance", "dppStaticLink"): "isVariantOf",
     ("DPPInstance", "partInstanceLink"): "schema:hasPart",
-    ("PartInstance", "partStaticLink"): "schema:isVariantOf",
+    ("PartInstance", "partStaticLink"): "isVariantOf",
     ("PartInstance", "compositeParts"): "dpp:compositeParts",
     ("PartInstance", "historyOfDetachedParts"): "dpp:historyOfDetachedParts",
     ("PartInstance", "compositeMaterials"): "dpp:compositeMaterials",
-    ("MaterialInstance", "materialStaticLink"): "schema:isVariantOf",
+    ("MaterialInstance", "materialStaticLink"): "isVariantOf",
     ("GHGEmissionRecord", "activity"): "dpp:activity",
     ("GHGEmissionRecord", "emission_factor"): "dpp:emissionFactor",
     ("ReplaceServiceStep", "newPart"): "dpp:newPart",
@@ -104,6 +122,24 @@ _MEASUREMENT_JSONLD_TERMS: dict[str, tuple[str, str]] = {
     "PartStatic.widthCM": ("width", "CM"),
     "PartStatic.depthCM": ("depth", "CM"),
     "MaterialInstance.weightGRM": ("weight", "GRM"),
+}
+
+_PROPERTY_VALUE_JSONLD_FIELDS: dict[str, tuple[str, str, str | None]] = {
+    "MaterialInstance.percentRecycled": ("additionalProperty", "percentRecycled", None),
+    "DPPInstance.cleaningCount": ("schema:additionalProperty", "cleaningCount", None),
+    "DPPInstance.chalkCount": ("schema:additionalProperty", "chalkCount", None),
+    "DPPInstance.brewingCount": ("schema:additionalProperty", "brewingCount", None),
+    "DPPInstance.coffeeGrindingCount": ("schema:additionalProperty", "coffeeGrindingCount", None),
+    "DPPInstance.operatingHRS": ("schema:additionalProperty", "operatingHRS", "HRS"),
+}
+
+_PRICE_SPECIFICATION_JSONLD_FIELDS = {
+    "SecondaryValueStep.costEur",
+    "RepairServiceStep.costEur",
+    "ReplaceServiceStep.costEur",
+    "CleaningServiceStep.costEur",
+    "RefurbishmentServiceStep.costEur",
+    "RemanufacturingServiceStep.costEur",
 }
 
 
@@ -151,10 +187,40 @@ def _jsonld_field_value(canonical_path: str, harmonized_field: Any) -> Any:
     name, unit_code = measurement
     return {
         "@type": "schema:QuantitativeValue",
-        "schema:name": name,
-        "schema:value": value,
-        "schema:unitCode": unit_code,
+        "name": name,
+        "value": value,
+        "unitCode": unit_code,
     }
+
+
+def _add_legacy_structured_field(
+    node: dict[str, Any],
+    canonical_path: str,
+    harmonized_field: Any,
+) -> bool:
+    """Serialize legacy exporter containers instead of inventing direct DPP properties."""
+    property_value = _PROPERTY_VALUE_JSONLD_FIELDS.get(canonical_path)
+    if property_value is not None:
+        output_term, name, unit_code = property_value
+        entry: dict[str, Any] = {
+            "@type": "schema:PropertyValue",
+            "name": name,
+            "value": effective_field_value(harmonized_field),
+        }
+        if unit_code is not None:
+            entry["unitCode"] = unit_code
+        node.setdefault(output_term, []).append(entry)
+        return True
+
+    if canonical_path in _PRICE_SPECIFICATION_JSONLD_FIELDS:
+        node["priceSpecification"] = {
+            "@type": "schema:PriceSpecification",
+            "schema:price": float(effective_field_value(harmonized_field)),
+            "schema:priceCurrency": "EUR",
+        }
+        return True
+
+    return False
 
 
 def _drop_none_values(value: Any) -> Any:
@@ -311,6 +377,8 @@ def _build_clean_node(entity: HarmonizedEntity, *, embedded: bool = False) -> di
 
     for canonical_path, harmonized_field in entity.fields.items():
         if harmonized_field.status in {"error", "ambiguous", "unmapped"}:
+            continue
+        if _add_legacy_structured_field(node, canonical_path, harmonized_field):
             continue
         node[_jsonld_field_term(canonical_path)] = _jsonld_field_value(canonical_path, harmonized_field)
 
