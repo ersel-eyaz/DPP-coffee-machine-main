@@ -139,6 +139,49 @@ class CleanJsonLdOutputTests(unittest.TestCase):
             ].original_value,
         )
 
+    def test_refurbishment_replacement_pairs_roundtrip_as_legacy_nested_parts(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "refurbishment-001",
+                    "@type": "dpp:RefurbishmentServiceStep",
+                    "diagnose": "dull burrs",
+                    "observedSymptoms": ["watery espresso"],
+                    "replacedAndNewParts": [
+                        [
+                            "part-old-001",
+                            {"@id": "part-new-001", "@type": "dpp:PartInstance"},
+                        ]
+                    ],
+                    "costEur": 120.0,
+                }
+            ],
+        }
+        result = harmonize_document(document, "service")
+
+        output = build_clean_jsonld(result, document=document)
+        refurbishment = _node_by_id(output, "refurbishment-001")
+        self.assertEqual(
+            "part-old-001",
+            refurbishment["dpp:replacedAndNewParts"][0][0],
+        )
+        self.assertEqual(
+            "part-new-001",
+            refurbishment["dpp:replacedAndNewParts"][0][1]["@id"],
+        )
+
+        roundtrip = harmonize_document(output, "service")
+        self.assertEqual(
+            [("part-old-001", "part-new-001")],
+            [
+                (existing_id, new_part.entity_id)
+                for existing_id, new_part in roundtrip.entities[
+                    "refurbishment-001"
+                ].paired_embedded_entities["replacedAndNewParts"]
+            ],
+        )
+
     def test_output_context_defines_semantic_prefixes(self) -> None:
         document = _load_example("emission_dirty.json")
         document["@context"]["dpp"] = "https://incoming.example/dpp#"

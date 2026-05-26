@@ -563,6 +563,7 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
     parsed_entities: dict[str, ParsedEntity] = {}
     root_entity_ids: list[str] = []
     embedded_children: dict[tuple[str, str], list[str]] = {}
+    paired_embedded_children: dict[tuple[str, str], list[tuple[str, str]]] = {}
     inline_link_relations: dict[str, list[ParsedRelation]] = {}
 
     def collect_parsed_entity(parsed_entity: ParsedEntity, *, as_root: bool) -> None:
@@ -589,6 +590,16 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                 ParsedRelation(label=relation_name, target_id=embedded.entity.entity_id)
             )
             collect_parsed_entity(embedded.entity, as_root=True)
+
+        for paired_embedded in parsed_entity.paired_embedded_entities:
+            relation_name = _canonical_relation_name(parsed_entity.entity_type, paired_embedded.label)
+            definition = _relation_definition(scope, parsed_entity.entity_type, relation_name)
+            if definition is None or definition.representation != "paired_embedded":
+                continue
+            paired_embedded_children.setdefault((parsed_entity.entity_id, relation_name), []).append(
+                (paired_embedded.existing_entity_id, paired_embedded.entity.entity_id)
+            )
+            collect_parsed_entity(paired_embedded.entity, as_root=False)
 
     for parsed_entity in parsed_document.entities:
         collect_parsed_entity(parsed_entity, as_root=True)
@@ -880,10 +891,21 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
     def build_nested_entity(entity_id: str) -> HarmonizedEntity:
         entity = harmonized_entities[entity_id]
         nested: dict[str, list[HarmonizedEntity]] = {}
+        paired_nested: dict[str, list[tuple[str, HarmonizedEntity]]] = {}
         for (parent_id, relation_name), child_ids in embedded_children.items():
             if parent_id == entity_id:
                 nested[relation_name] = [build_nested_entity(child_id) for child_id in child_ids]
-        return replace(entity, embedded_entities=nested)
+        for (parent_id, relation_name), pairs in paired_embedded_children.items():
+            if parent_id == entity_id:
+                paired_nested[relation_name] = [
+                    (existing_id, build_nested_entity(child_id))
+                    for existing_id, child_id in pairs
+                ]
+        return replace(
+            entity,
+            embedded_entities=nested,
+            paired_embedded_entities=paired_nested,
+        )
 
     return HarmonizationResult(
         scope_name=scope_name,

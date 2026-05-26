@@ -25,10 +25,10 @@ _SERVICE_CONTEXT_ENTITIES = ("PartInstance",)
 
 _SERVICE_ACTION_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "RepairServiceStep": ("repairedPartId",),
-    "ReplaceServiceStep": ("replacedPartId", "newPart"),
+    "ReplaceServiceStep": ("replacedPartId",),
     "CleaningServiceStep": ("cleanedPartId",),
-    "RefurbishmentServiceStep": ("repairedPartIds", "cleanedPartIds", "replacedAndNewParts"),
-    "RemanufacturingServiceStep": ("repairedPartIds", "cleanedPartIds", "replacedAndNewParts"),
+    "RefurbishmentServiceStep": ("repairedPartIds", "cleanedPartIds"),
+    "RemanufacturingServiceStep": ("repairedPartIds", "cleanedPartIds"),
 }
 
 
@@ -89,6 +89,24 @@ SERVICE_SCOPE = ScopeDefinition(
             representation="embedded",
             required=False,
             description="Replacement part instance introduced by a replace service step.",
+        ),
+        CanonicalRelation(
+            source_entity_type="RefurbishmentServiceStep",
+            relation_name="replacedAndNewParts",
+            target_entity_type="PartInstance",
+            representation="paired_embedded",
+            is_collection=True,
+            required=False,
+            description="Pairs each replaced part id with its embedded replacement part instance.",
+        ),
+        CanonicalRelation(
+            source_entity_type="RemanufacturingServiceStep",
+            relation_name="replacedAndNewParts",
+            target_entity_type="PartInstance",
+            representation="paired_embedded",
+            is_collection=True,
+            required=False,
+            description="Pairs each replaced part id with its embedded replacement part instance.",
         ),
     ),
 )

@@ -20,7 +20,7 @@ FieldRole = Literal[
     "free_text_harmonization",
     "analysis_context",
 ]
-StructuralRepresentation = Literal["link", "embedded"]
+StructuralRepresentation = Literal["link", "embedded", "paired_embedded"]
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,8 @@ class CanonicalRelation:
 
     Relations are not harmonized by the data quality layer. Entity typing and
     relation structure are assumed to be reliable. The representation flag
-    retains the legacy distinction between references and embedded children.
+    retains the legacy distinction between references, embedded children, and
+    pairs that combine an existing id with an embedded replacement entity.
     """
 
     source_entity_type: str

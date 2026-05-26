@@ -110,6 +110,8 @@ _RELATION_JSONLD_TERMS: dict[tuple[str, str], str] = {
     ("GHGEmissionRecord", "activity"): "dpp:activity",
     ("GHGEmissionRecord", "emission_factor"): "dpp:emissionFactor",
     ("ReplaceServiceStep", "newPart"): "dpp:newPart",
+    ("RefurbishmentServiceStep", "replacedAndNewParts"): "dpp:replacedAndNewParts",
+    ("RemanufacturingServiceStep", "replacedAndNewParts"): "dpp:replacedAndNewParts",
 }
 
 _MEASUREMENT_JSONLD_TERMS: dict[str, tuple[str, str]] = {
@@ -394,6 +396,16 @@ def _build_clean_node(entity: HarmonizedEntity, *, embedded: bool = False) -> di
         else:
             node[output_term] = serialized
 
+    for relation_name, pairs in entity.paired_embedded_entities.items():
+        output_term = _RELATION_JSONLD_TERMS.get(
+            (entity.entity_type, relation_name),
+            f"dpp:{relation_name}",
+        )
+        node[output_term] = [
+            [existing_id, _build_clean_node(child, embedded=True)]
+            for existing_id, child in pairs
+        ]
+
     return node
 
 
@@ -493,6 +505,7 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
         entity_dict = asdict(entity)
         entity_dict.pop("relations", None)
         entity_dict.pop("embedded_entities", None)
+        entity_dict.pop("paired_embedded_entities", None)
         entity_dict.pop("has_explicit_id", None)
 
         if result.scope_name == "service":

@@ -131,6 +131,8 @@ class HarmonizedEntity:
         relations: Trusted reference relations preserved from the input.
         embedded_entities: Owned child entities keyed by structural property,
             such as ``activity`` or ``compositeParts``.
+        paired_embedded_entities: Structural replacement pairs keyed by property,
+            each retaining an existing-part id and an embedded replacement entity.
         unmapped_fields: Raw fields that could not be mapped.
         text_harmonization: Free-text concept normalization details, separated
             from structural field-label mapping.
@@ -143,6 +145,7 @@ class HarmonizedEntity:
     fields: dict[str, HarmonizedField] = field(default_factory=dict)
     relations: list[PreservedRelation] = field(default_factory=list)
     embedded_entities: dict[str, list["HarmonizedEntity"]] = field(default_factory=dict)
+    paired_embedded_entities: dict[str, list[tuple[str, "HarmonizedEntity"]]] = field(default_factory=dict)
     unmapped_fields: list[RawField] = field(default_factory=list)
     text_harmonization: dict[str, Any] = field(default_factory=dict)
     issues: list[HarmonizationIssue] = field(default_factory=list)
@@ -169,6 +172,9 @@ class HarmonizationResult:
             yield entity
             for children in entity.embedded_entities.values():
                 for child in children:
+                    yield from walk(child)
+            for pairs in entity.paired_embedded_entities.values():
+                for _, child in pairs:
                     yield from walk(child)
 
         for entity in self.entities.values():

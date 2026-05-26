@@ -489,7 +489,7 @@ class AnomalyServiceTests(unittest.TestCase):
                     "diagnose": "dull burrs",
                     "observedSymptoms": ["watery espresso"],
                     "replacedPartId": "part-old-001",
-                    "newPart": {"@id": "part-new-001", "@type": "dpp:PartInstance"},
+                    "newPart": {"@id": "part-new-001"},
                     "costEur": 89.0,
                 }
             ],
@@ -505,7 +505,7 @@ class AnomalyServiceTests(unittest.TestCase):
         )
         self.assertEqual(["part-new-001"], [child.entity_id for child in entity.embedded_entities["newPart"]])
 
-    def test_replaced_and_new_parts_pair_context_is_preserved(self) -> None:
+    def test_replaced_and_new_parts_pair_preserves_embedded_replacement_entity(self) -> None:
         replaced_pairs = [["part-old-001", {"@id": "part-new-001"}]]
         document = {
             "@context": {"dpp": "https://example.org/dpp#"},
@@ -524,9 +524,13 @@ class AnomalyServiceTests(unittest.TestCase):
         result = harmonize_document(document, "service")
         entity = result.entities["refurbishment-001"]
 
+        self.assertNotIn("RefurbishmentServiceStep.replacedAndNewParts", entity.fields)
         self.assertEqual(
-            replaced_pairs,
-            entity.fields["RefurbishmentServiceStep.replacedAndNewParts"].original_value,
+            [("part-old-001", "part-new-001")],
+            [
+                (existing_id, new_part.entity_id)
+                for existing_id, new_part in entity.paired_embedded_entities["replacedAndNewParts"]
+            ],
         )
         self.assertEqual([], entity.relations)
 

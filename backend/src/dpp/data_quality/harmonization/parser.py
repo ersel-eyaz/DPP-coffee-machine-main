@@ -53,6 +53,15 @@ class ParsedEmbeddedEntity:
 
 
 @dataclass(frozen=True)
+class ParsedPairedEmbeddedEntity:
+    """An existing entity id paired with one typed embedded replacement entity."""
+
+    label: str
+    existing_entity_id: str
+    entity: "ParsedEntity"
+
+
+@dataclass(frozen=True)
 class ParsedEntity:
     """
     One parsed input entity.
@@ -63,6 +72,7 @@ class ParsedEntity:
         fields: Raw non-relation fields.
         relations: Raw relation references.
         embedded_entities: Typed owned children found below this entity.
+        paired_embedded_entities: Existing-id/new-entity pairs below this entity.
     """
 
     entity_id: str
@@ -71,6 +81,7 @@ class ParsedEntity:
     fields: list[ParsedField] = field(default_factory=list)
     relations: list[ParsedRelation] = field(default_factory=list)
     embedded_entities: list[ParsedEmbeddedEntity] = field(default_factory=list)
+    paired_embedded_entities: list[ParsedPairedEmbeddedEntity] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -200,6 +211,40 @@ def _extract_legacy_container_fields(label: str, value: Any) -> list[ParsedField
     return []
 
 
+def _extract_paired_embedded_entities(
+    label: str,
+    value: Any,
+    *,
+    entity_id: str,
+) -> list[ParsedPairedEmbeddedEntity]:
+    """Parse legacy replacement pairs shaped as ``[old_part_id, new_part_object]``."""
+    if label != "replacedAndNewParts" or not isinstance(value, list):
+        return []
+
+    pairs: list[ParsedPairedEmbeddedEntity] = []
+    for index, pair in enumerate(value):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            continue
+        existing_entity_id, new_part = pair
+        if not isinstance(existing_entity_id, str) or not isinstance(new_part, dict):
+            continue
+        if "@type" not in new_part and isinstance(new_part.get("@id"), str):
+            new_part = {**new_part, "@type": "dpp:PartInstance"}
+        if "@type" not in new_part:
+            continue
+        pairs.append(
+            ParsedPairedEmbeddedEntity(
+                label=label,
+                existing_entity_id=existing_entity_id,
+                entity=_parse_graph_node(
+                    new_part,
+                    fallback_id=f"{entity_id}/{label}/{index}/newPart",
+                ),
+            )
+        )
+    return pairs
+
+
 def _parse_graph_node(node: Any, *, fallback_id: str) -> ParsedEntity:
     """Parse one root or embedded typed node."""
     if not isinstance(node, dict):
@@ -211,6 +256,7 @@ def _parse_graph_node(node: Any, *, fallback_id: str) -> ParsedEntity:
     fields: list[ParsedField] = []
     relations: list[ParsedRelation] = []
     embedded_entities: list[ParsedEmbeddedEntity] = []
+    paired_embedded_entities: list[ParsedPairedEmbeddedEntity] = []
 
     for raw_label, value in node.items():
         if raw_label in {"@id", "@type", "@context"}:
@@ -220,6 +266,27 @@ def _parse_graph_node(node: Any, *, fallback_id: str) -> ParsedEntity:
         legacy_container_fields = _extract_legacy_container_fields(label, value)
         if legacy_container_fields:
             fields.extend(legacy_container_fields)
+            continue
+
+        paired_children = _extract_paired_embedded_entities(
+            label,
+            value,
+            entity_id=entity_id,
+        )
+        if paired_children:
+            paired_embedded_entities.extend(paired_children)
+            continue
+
+        if label == "newPart" and isinstance(value, dict) and "@type" not in value and isinstance(value.get("@id"), str):
+            embedded_entities.append(
+                ParsedEmbeddedEntity(
+                    label=label,
+                    entity=_parse_graph_node(
+                        {**value, "@type": "dpp:PartInstance"},
+                        fallback_id=f"{entity_id}/{label}/0",
+                    ),
+                )
+            )
             continue
 
         normalized_value = _normalize_nested_value(value)
@@ -268,6 +335,7 @@ def _parse_graph_node(node: Any, *, fallback_id: str) -> ParsedEntity:
         fields=fields,
         relations=relations,
         embedded_entities=embedded_entities,
+        paired_embedded_entities=paired_embedded_entities,
     )
 
 

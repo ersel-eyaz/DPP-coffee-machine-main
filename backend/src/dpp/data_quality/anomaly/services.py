@@ -167,6 +167,8 @@ def _apply_required_relation_checks(result: HarmonizationResult) -> list[Anomaly
 
             if relation.representation == "embedded":
                 present = bool(_embedded_children(entity, relation.relation_name))
+            elif relation.representation == "paired_embedded":
+                present = bool(entity.paired_embedded_entities.get(relation.relation_name, []))
             else:
                 present = bool(_relation_targets(entity, relation.relation_name))
             if present:
@@ -176,7 +178,7 @@ def _apply_required_relation_checks(result: HarmonizationResult) -> list[Anomaly
                 AnomalyFinding(
                     check_id=(
                         "missing_required_embedded_object"
-                        if relation.representation == "embedded"
+                        if relation.representation in {"embedded", "paired_embedded"}
                         else "missing_required_relation"
                     ),
                     category="relationship",
