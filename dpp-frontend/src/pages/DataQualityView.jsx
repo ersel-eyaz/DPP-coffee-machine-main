@@ -36,7 +36,7 @@ function JsonPanel({ title, value }) {
         <Badge bg="secondary">JSON</Badge>
       </Card.Header>
       <Card.Body className="p-0">
-        <pre className="m-0 p-3 bg-light overflow-auto" style={{ minHeight: 320, maxHeight: 560, fontSize: "0.84rem" }}>
+        <pre className="m-0 p-3 bg-light dq-json-scroll" style={{ minHeight: 320, maxHeight: 560, fontSize: "0.84rem" }}>
           {value ? prettyJson(value) : "No output yet."}
         </pre>
       </Card.Body>
@@ -97,6 +97,20 @@ function flattenTextConcepts(report) {
   return entries;
 }
 
+function issueMatchesTextEntry(issue, entry) {
+  return issue.entity_id === entry.entity_id
+    && issue.field_label === entry.field_name
+    && String(issue.message || "").includes(String(entry.original_value));
+}
+
+function textEntryIssues(entry, issues) {
+  return issues.filter((issue) => issueMatchesTextEntry(issue, entry));
+}
+
+function nonTextHarmonizationIssues(issues, textConcepts) {
+  return issues.filter((issue) => !textConcepts.some((entry) => issueMatchesTextEntry(issue, entry)));
+}
+
 function controlledVocabularyFields(report) {
   const paths = new Set(["ActivityData.activity_type", "GHGEmissionRecord.scope", "GHGEmissionRecord.scope3_category"]);
   return flattenHarmonizationEntities(report).filter((field) => paths.has(field.canonical_path));
@@ -112,6 +126,9 @@ function SummaryBadges({ result, onBadgeClick }) {
   const normalizedTextConcepts = textConcepts.filter((entry) => entry.status === "normalized").length;
   const vocabularyFields = controlledVocabularyFields(result?.harmonization_report);
   const serviceScope = result?.scope === "service";
+  const visibleHarmonizationIssues = serviceScope
+    ? nonTextHarmonizationIssues(harmonizationIssues, textConcepts)
+    : harmonizationIssues;
   const emissionScope = result?.scope === "emission";
   if (!harmonization && !anomaly) return null;
 
@@ -166,10 +183,10 @@ function SummaryBadges({ result, onBadgeClick }) {
                 type="button"
                 className="dq-summary-badge"
                 bg={normalizedTextConcepts === textConcepts.length && textConcepts.length ? "success" : "warning"}
-                title="Show service-text concept matching results"
-                onClick={() => onBadgeClick?.("text-concepts")}
+                title="Show service-text harmonization results and notes"
+                onClick={() => onBadgeClick?.("text-harmonization")}
               >
-                Text concepts {normalizedTextConcepts}/{textConcepts.length}
+                Text harmonization {normalizedTextConcepts}/{textConcepts.length}
               </Badge>
             </Col>
           )}
@@ -187,18 +204,20 @@ function SummaryBadges({ result, onBadgeClick }) {
               </Badge>
             </Col>
           )}
-          <Col xs="auto">
-            <Badge
-              as="button"
-              type="button"
-              className="dq-summary-badge"
-              bg={harmonizationIssues.length ? "warning" : "success"}
-              title="Show harmonization issues and candidate decisions"
-              onClick={() => onBadgeClick?.("harmonization-issues")}
-            >
-              Harmonization notes {harmonizationIssues.length}
-            </Badge>
-          </Col>
+          {(!serviceScope || visibleHarmonizationIssues.length > 0) && (
+            <Col xs="auto">
+              <Badge
+                as="button"
+                type="button"
+                className="dq-summary-badge"
+                bg={visibleHarmonizationIssues.length ? "warning" : "success"}
+                title="Show harmonization issues and candidate decisions"
+                onClick={() => onBadgeClick?.("harmonization-issues")}
+              >
+                Harmonization notes {visibleHarmonizationIssues.length}
+              </Badge>
+            </Col>
+          )}
         </>
       )}
       {anomaly && (
@@ -354,8 +373,8 @@ function TextConceptTable({ report }) {
 
   return (
     <Card>
-      <Card.Header className="fw-semibold">Service Text Concepts</Card.Header>
-      <div className="table-responsive">
+      <Card.Header className="fw-semibold">Text Harmonization</Card.Header>
+      <div className="table-responsive dq-table-scroll">
         <Table size="sm" hover className="mb-0 align-middle">
           <thead>
             <tr>
@@ -401,7 +420,7 @@ function AnomalyTable({ report }) {
   return (
     <Card>
       <Card.Header className="fw-semibold">Anomaly Findings</Card.Header>
-      <div className="table-responsive">
+      <div className="table-responsive dq-table-scroll">
         <Table size="sm" hover className="mb-0 align-middle">
           <thead>
             <tr>
@@ -450,6 +469,9 @@ function SummaryModal({ type, result, onHide }) {
   const entities = Object.values(result?.harmonization_report?.entities || {});
   const harmonizationIssues = flattenHarmonizationIssues(result?.harmonization_report);
   const textConcepts = flattenTextConcepts(result?.harmonization_report);
+  const visibleHarmonizationIssues = result?.scope === "service"
+    ? nonTextHarmonizationIssues(harmonizationIssues, textConcepts)
+    : harmonizationIssues;
   const vocabularyFields = controlledVocabularyFields(result?.harmonization_report);
   const severity = type?.startsWith("severity:") ? type.split(":")[1] : null;
   const filteredFindings = severity ? findings.filter((finding) => finding.severity === severity) : findings;
@@ -461,7 +483,7 @@ function SummaryModal({ type, result, onHide }) {
   if (type === "changed-fields") title = "Changed Labels / Values";
   if (type === "unmapped") title = "Unmapped Labels";
   if (type === "harmonization-issues") title = "Harmonization Notes";
-  if (type === "text-concepts") title = "Service Text Concepts";
+  if (type === "text-harmonization") title = "Text Harmonization";
   if (type === "controlled-values") title = "Controlled Vocabulary Values";
   if (type === "findings") title = "Anomaly Findings";
   if (severity) title = `${severity} Findings`;
@@ -592,9 +614,9 @@ function SummaryModal({ type, result, onHide }) {
         )}
 
         {type === "harmonization-issues" && (
-          harmonizationIssues.length ? (
+          visibleHarmonizationIssues.length ? (
             <div className="d-flex flex-column gap-2">
-              {harmonizationIssues.map((issue, index) => (
+              {visibleHarmonizationIssues.map((issue, index) => (
                 <Card key={`${issue.entity_id}-${issue.field_label}-${index}`} className="shadow-none">
                   <Card.Body>
                     <div className="d-flex justify-content-between gap-3 mb-1">
@@ -616,41 +638,53 @@ function SummaryModal({ type, result, onHide }) {
           )
         )}
 
-        {type === "text-concepts" && (
+        {type === "text-harmonization" && (
           textConcepts.length ? (
             <div className="d-flex flex-column gap-2">
-              {textConcepts.map((entry, index) => (
-                <Card key={`${entry.entity_id}-${entry.field_name}-${index}`} className="shadow-none">
-                  <Card.Body>
-                    <div className="d-flex justify-content-between gap-3 mb-1">
-                      <div className="fw-semibold">{entry.field_name}</div>
-                      <Badge
-                        bg={entry.status === "normalized" ? "success" : entry.status === "error" ? "danger" : "warning"}
-                      >
-                        {entry.status}
-                      </Badge>
-                    </div>
-                    <div className="mb-2">{entry.original_value}</div>
-                    <div className="small text-muted">
-                      {entry.entity_type} · {entry.entity_id}
-                    </div>
-                    {entry.normalized_value && (
-                      <div className="small mt-1">
-                        Concept: <span className="fw-semibold">{entry.normalized_value}</span> · Method:{" "}
-                        {formatMethod(entry.method, entry.confidence)}
+              {textConcepts.map((entry, index) => {
+                const notes = textEntryIssues(entry, harmonizationIssues);
+                return (
+                  <Card key={`${entry.entity_id}-${entry.field_name}-${index}`} className="shadow-none">
+                    <Card.Body>
+                      <div className="d-flex justify-content-between gap-3 mb-1">
+                        <div className="fw-semibold">{entry.field_name}</div>
+                        <Badge
+                          bg={entry.status === "normalized" ? "success" : entry.status === "error" ? "danger" : "warning"}
+                        >
+                          {entry.status}
+                        </Badge>
                       </div>
-                    )}
-                    {entry.candidates?.length > 0 && (
-                      <div className="small mt-1">
-                        Candidates:{" "}
-                        {entry.candidates
-                          .map((candidate) => formatMethod(candidate.concept_id, candidate.confidence))
-                          .join(", ")}
+                      <div className="mb-2">{entry.original_value}</div>
+                      <div className="small text-muted">
+                        {entry.entity_type} · {entry.entity_id}
                       </div>
-                    )}
-                  </Card.Body>
-                </Card>
-              ))}
+                      {entry.normalized_value && (
+                        <div className="small mt-1">
+                          Concept: <span className="fw-semibold">{entry.normalized_value}</span> · Method:{" "}
+                          {formatMethod(entry.method, entry.confidence)}
+                        </div>
+                      )}
+                      {entry.candidates?.length > 0 && (
+                        <div className="small mt-1">
+                          Candidates:{" "}
+                          {entry.candidates
+                            .map((candidate) => formatMethod(candidate.concept_id, candidate.confidence))
+                            .join(", ")}
+                        </div>
+                      )}
+                      {notes.map((issue, issueIndex) => (
+                        <Alert
+                          key={`${entry.entity_id}-${entry.field_name}-note-${issueIndex}`}
+                          variant={severityVariant(issue.severity)}
+                          className="py-2 mt-2 mb-0"
+                        >
+                          {issue.message}
+                        </Alert>
+                      ))}
+                    </Card.Body>
+                  </Card>
+                );
+              })}
             </div>
           ) : (
             <Alert variant="secondary" className="mb-0">
@@ -990,9 +1024,11 @@ export default function DataQualityView() {
                     <TextConceptTable report={result?.harmonization_report} />
                   </Col>
                 )}
-                <Col xs={12}>
-                  <HarmonizationTable report={result?.harmonization_report} />
-                </Col>
+                {result?.scope !== "service" && (
+                  <Col xs={12}>
+                    <HarmonizationTable report={result?.harmonization_report} />
+                  </Col>
+                )}
                 <Col xs={12}>
                   <AnomalyTable report={result?.anomaly_report} />
                 </Col>
