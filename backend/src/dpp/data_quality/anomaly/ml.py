@@ -270,17 +270,14 @@ def _format_top_deviations(deviations: list[dict[str, Any]], limit: int = 3) -> 
 
 
 def _isolation_forest_scores(
-    training_rows: list[FeatureRow],
+    reference_rows: list[FeatureRow],
     target_rows: list[FeatureRow],
     feature_names: list[str],
-    threshold_rows: list[FeatureRow] | None = None,
-) -> tuple[dict[str, float], float, dict[str, Any]]:
+) -> tuple[dict[str, float], dict[str, float], dict[str, int], dict[str, Any]]:
     """Train a scikit-learn Isolation Forest and score target rows."""
-    threshold_rows = threshold_rows or training_rows
     tree_count = 100
-    sample_size = min(16, len(training_rows))
-    training_matrix = [[row.features[name] for name in feature_names] for row in training_rows]
-    threshold_matrix = [[row.features[name] for name in feature_names] for row in threshold_rows]
+    sample_size = min(16, len(reference_rows))
+    reference_matrix = [[row.features[name] for name in feature_names] for row in reference_rows]
     target_matrix = {
         row.entity_id: [row.features[name] for name in feature_names]
         for row in target_rows
@@ -292,24 +289,33 @@ def _isolation_forest_scores(
         contamination=0.15,
         random_state=42,
     )
-    model.fit(training_matrix)
+    model.fit(reference_matrix)
 
-    reference_scores = [-float(score) for score in model.score_samples(threshold_matrix)]
-    threshold = min(0.72, _quantile(reference_scores, 0.85) + 0.04)
-    target_scores = {
+    reference_scores = [-float(score) for score in model.score_samples(reference_matrix)]
+    anomaly_scores = {
         entity_id: round(-float(model.score_samples([row])[0]), 6)
+        for entity_id, row in target_matrix.items()
+    }
+    decision_scores = {
+        entity_id: round(float(model.decision_function([row])[0]), 6)
+        for entity_id, row in target_matrix.items()
+    }
+    predictions = {
+        entity_id: int(model.predict([row])[0])
         for entity_id, row in target_matrix.items()
     }
     metadata = {
         "implementation": "sklearn.ensemble.IsolationForest",
         "sklearn_version": sklearn.__version__,
+        "decision_strategy": "sklearn_predict",
         "tree_count": tree_count,
         "sample_size": sample_size,
         "contamination": 0.15,
         "reference_score_q85": round(_quantile(reference_scores, 0.85), 6),
         "reference_score_max": round(max(reference_scores), 6),
+        "score_samples_direction": "lower native score means more anomalous; reported anomaly_score is sign-inverted",
     }
-    return target_scores, round(threshold, 6), metadata
+    return anomaly_scores, decision_scores, predictions, metadata
 
 
 def _statistical_finding(
@@ -424,15 +430,16 @@ def build_ml_anomaly_findings(rows: list[FeatureRow]) -> list[AnomalyFinding]:
         if not shared_feature_names:
             continue
 
-        scores, threshold, metadata = _isolation_forest_scores(
-            profile.rows + target_rows,
+        scores, decisions, predictions, metadata = _isolation_forest_scores(
+            profile.rows,
             target_rows,
             shared_feature_names,
-            threshold_rows=profile.rows,
         )
         for target in target_rows:
             score = scores[target.entity_id]
-            if score < threshold:
+            prediction = predictions[target.entity_id]
+            decision = decisions[target.entity_id]
+            if prediction != -1:
                 continue
             top_deviations = _top_feature_deviations(target, profile.rows, shared_feature_names)
             findings.append(
@@ -441,24 +448,26 @@ def build_ml_anomaly_findings(rows: list[FeatureRow]) -> list[AnomalyFinding]:
                     check_method="isolation_forest",
                     target=target,
                     message=(
-                        "The harmonized feature vector is isolated unusually quickly by the Isolation Forest model."
+                        "The harmonized feature vector is classified as an outlier by the Isolation Forest model."
                         f"{_format_top_deviations(top_deviations)}"
                     ),
                     observed_value={
                         "anomaly_score": score,
+                        "sklearn_decision_function": decision,
+                        "sklearn_prediction": prediction,
                         "top_deviating_features": top_deviations[:3],
                     },
-                    expected={"score_threshold": threshold},
+                    expected={"sklearn_prediction": -1},
                     feature_names=shared_feature_names,
                     reference_profile=profile,
                     severity="warning",
-                    confidence=round(min(0.99, max(0.5, score)), 6),
                     extra_evidence={
                         "model_id": f"local_isolation_forest_{target.scope_name}_{target.feature_set}_v1",
                         "score": score,
-                        "threshold": threshold,
+                        "sklearn_decision_function": decision,
+                        "sklearn_prediction": prediction,
                         "top_deviating_features": top_deviations,
-                        "training_rows": len(profile.rows) + len(target_rows),
+                        "training_rows": len(profile.rows),
                         **metadata,
                     },
                 )
