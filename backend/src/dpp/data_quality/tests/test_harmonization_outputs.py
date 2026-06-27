@@ -6,8 +6,15 @@ import json
 import unittest
 from pathlib import Path
 
+from dpp.data_quality.harmonization.mapper import map_field_label
+from dpp.data_quality.harmonization.normalizers import normalize_enum_value
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.services import harmonize_document
+from dpp.data_quality.harmonization.free_text import normalize_text_value
+from dpp.data_quality.harmonization.feedback import (
+    approve_feedback_proposal,
+    create_feedback_proposal,
+)
 
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples" / "harmonization"
@@ -20,6 +27,133 @@ def _load_example(filename: str) -> dict:
 
 def _node_by_id(document: dict, entity_id: str) -> dict:
     return next(node for node in document["@graph"] if node["@id"] == entity_id)
+
+
+class VocabularyAliasTests(unittest.TestCase):
+    def test_minimal_llm_product_field_aliases_map_to_canonical_paths(self) -> None:
+        expected_paths = {
+            ("product name", "DPPStatic"): "DPPStatic.name",
+            ("product type", "DPPStatic"): "DPPStatic.productClass",
+            ("modular part", "PartInstance"): "PartInstance.isModular",
+            ("failure state", "PartInstance"): "PartInstance.hasFailstate",
+        }
+
+        for (label, entity_type), expected_path in expected_paths.items():
+            with self.subTest(label=label, entity_type=entity_type):
+                candidate = map_field_label(label, "product", entity_type)
+                self.assertIsNotNone(candidate)
+                self.assertEqual(expected_path, candidate.canonical_path)
+
+    def test_minimal_llm_emission_field_aliases_map_to_canonical_paths(self) -> None:
+        expected_paths = {
+            ("type of activity", "ActivityData"): "ActivityData.activity_type",
+            ("ghg scope", "GHGEmissionRecord"): "GHGEmissionRecord.scope",
+            ("scope3 category", "GHGEmissionRecord"): "GHGEmissionRecord.scope3_category",
+            ("calculation method", "GHGEmissionRecord"): "GHGEmissionRecord.calculation_method",
+            ("data provenance", "GHGEmissionRecord"): "GHGEmissionRecord.provenance",
+        }
+
+        for (label, entity_type), expected_path in expected_paths.items():
+            with self.subTest(label=label, entity_type=entity_type):
+                candidate = map_field_label(label, "emission", entity_type)
+                self.assertIsNotNone(candidate)
+                self.assertEqual(expected_path, candidate.canonical_path)
+
+    def test_minimal_llm_emission_enum_aliases_normalize_to_canonical_values(self) -> None:
+        expected_values = {
+            ("ActivityData.activity_type", "travel distance"): "distance_traveled",
+            ("ActivityData.activity_type", "fuel used"): "fuel_consumption",
+            ("GHGEmissionRecord.scope", "scope1"): "scope_1",
+            ("GHGEmissionRecord.scope3_category", "work travel"): "business_travel",
+            ("GHGEmissionRecord.scope3_category", "sold product use"): "use_of_sold_products",
+        }
+
+        for (canonical_path, value), expected_value in expected_values.items():
+            with self.subTest(canonical_path=canonical_path, value=value):
+                self.assertEqual(
+                    expected_value,
+                    normalize_enum_value(canonical_path, value),
+                )
+
+
+class ServiceSurfaceFormTests(unittest.TestCase):
+    def test_core_symptom_surface_forms_normalize_without_semantic_fallback(self) -> None:
+        expected_concepts = {
+            "water leak": "water_leakage",
+            "not grinding": "grinder_not_working",
+            "no coffee coming out": "no_coffee_output",
+            "not heating water": "water_not_heating",
+            "not piercing coffee capsules": "pod_not_pierced",
+        }
+
+        for text, expected_concept in expected_concepts.items():
+            with self.subTest(text=text):
+                result = normalize_text_value("symptom", text, enable_semantic=False)
+                self.assertEqual("normalized", result.status)
+                self.assertEqual(expected_concept, result.normalized_concept)
+                self.assertEqual("alias", result.method)
+
+    def test_core_diagnosis_surface_forms_normalize_without_semantic_fallback(self) -> None:
+        expected_concepts = {
+            "pump dead": "pump_fault",
+            "clogged with limescale": "limescale_or_scale_build_up",
+            "faulty solenoid": "valve_or_solenoid_fault",
+            "plug fuse blown": "fuse_or_thermal_fuse_fault",
+            "plunger cannot pierce capsules": "pod_mechanism_or_lid_fault",
+        }
+
+        for text, expected_concept in expected_concepts.items():
+            with self.subTest(text=text):
+                result = normalize_text_value("diagnosis", text, enable_semantic=False)
+                self.assertEqual("normalized", result.status)
+                self.assertEqual(expected_concept, result.normalized_concept)
+                self.assertEqual("alias", result.method)
+
+    def test_review_candidate_service_concept_is_reported_separately(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "service-001",
+                    "@type": "dpp:ReplaceServiceStep",
+                    "diagnose": "dull burrs",
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        entity = result.entities["service-001"]
+        report_entry = entity.text_harmonization["diagnose"]
+
+        self.assertEqual("dull_burrs", report_entry["normalized_value"])
+        self.assertEqual("review_candidate", report_entry["inventory_status"])
+        self.assertTrue(
+            any("review-candidate" in issue.message for issue in entity.issues)
+        )
+
+
+class FeedbackProposalTests(unittest.TestCase):
+    def test_feedback_proposal_stays_separate_from_core_registry(self) -> None:
+        proposal = create_feedback_proposal(
+            action="propose_surface_form",
+            scope_name="service",
+            entity_type="RepairServiceStep",
+            field_path="RepairServiceStep.diagnose",
+            original_value="pump sounds dead",
+            concept_id="pump_fault",
+            proposed_surface_form="pump sounds dead",
+            reviewer="local_user",
+        )
+        approved = approve_feedback_proposal(
+            proposal,
+            reviewer="local_user",
+            rationale="Accepted as local evidence only.",
+        )
+
+        self.assertEqual("proposed", proposal.status)
+        self.assertEqual("approved", approved.status)
+        self.assertEqual("pump_fault", approved.as_dict()["concept_id"])
+        self.assertEqual("pump sounds dead", approved.as_dict()["proposed_surface_form"])
 
 
 class CleanJsonLdOutputTests(unittest.TestCase):

@@ -534,6 +534,110 @@ class AnomalyServiceTests(unittest.TestCase):
         )
         self.assertEqual([], entity.relations)
 
+    def test_service_diagnosis_part_evidence_mismatch_is_flagged(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "replace-001",
+                    "@type": "dpp:ReplaceServiceStep",
+                    "diagnose": "pump fault",
+                    "observedSymptoms": ["not pumping water"],
+                    "replacedPartId": "part-burr-set-001",
+                    "newPart": {"@id": "part-new-001"},
+                    "costEur": 89.0,
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        anomaly = analyze_harmonization_result(result)
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "service_diagnosis_part_evidence_mismatch"
+        )
+
+        self.assertEqual("info", finding.severity)
+        self.assertEqual("pump_fault", finding.observed_value["diagnosis_concept"])
+        self.assertEqual(["part-burr-set-001"], finding.observed_value["part_references"])
+        self.assertIn("pump", finding.expected["part_keywords_seen_in_relation_evidence"])
+
+    def test_service_diagnosis_part_evidence_match_is_not_flagged(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "replace-001",
+                    "@type": "dpp:ReplaceServiceStep",
+                    "diagnose": "dull burrs",
+                    "observedSymptoms": ["watery espresso"],
+                    "replacedPartId": "part-burr-set-001",
+                    "newPart": {"@id": "part-new-001"},
+                    "costEur": 89.0,
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        anomaly = analyze_harmonization_result(result)
+
+        self.assertNotIn(
+            "service_diagnosis_part_evidence_mismatch",
+            [finding.check_id for finding in anomaly.findings],
+        )
+
+    def test_review_candidate_service_concept_is_flagged_for_confirmation(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "replace-001",
+                    "@type": "dpp:ReplaceServiceStep",
+                    "diagnose": "dull burrs",
+                    "replacedPartId": "part-burr-set-001",
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        anomaly = analyze_harmonization_result(result)
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "service_review_candidate_concept"
+        )
+
+        self.assertEqual("info", finding.severity)
+        self.assertEqual("dull_burrs", finding.observed_value)
+        self.assertEqual("confirm_or_reject_review_candidate_concept", finding.review_action)
+
+    def test_llm_relation_hint_part_mismatch_is_soft_flagged(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "repair-001",
+                    "@type": "dpp:RepairServiceStep",
+                    "diagnose": "heating element failed",
+                    "repairedPartId": "part-pump-001",
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        anomaly = analyze_harmonization_result(result)
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "service_diagnosis_part_evidence_mismatch"
+        )
+
+        self.assertEqual("info", finding.severity)
+        self.assertEqual("heating_element_failure", finding.observed_value["diagnosis_concept"])
+        self.assertIn("llm_minimal_heating_element_failure", finding.expected["hint_ids"])
+        self.assertIn("minimal_evidence_llm_candidate", finding.evidence["support_levels"])
+
     def test_report_summary_counts_check_methods(self) -> None:
         result = AnomalyResult(
             scope_name="product",

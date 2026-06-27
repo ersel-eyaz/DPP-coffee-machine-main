@@ -82,7 +82,13 @@ def _normalize_label(label: str) -> str:
 _ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
     # Product scope: product-level static fields.
     ("product", "DPPStatic"): {
+        "name": "DPPStatic.name",
+        "productname": "DPPStatic.name",
+        "dppname": "DPPStatic.name",
         "category": "DPPStatic.productClass",
+        "productclass": "DPPStatic.productClass",
+        "producttype": "DPPStatic.productClass",
+        "class": "DPPStatic.productClass",
         "weight": "DPPStatic.weightGRM",
         "height": "DPPStatic.heightCM",
         "width": "DPPStatic.widthCM",
@@ -119,6 +125,16 @@ _ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
         "componentwidth": "PartStatic.widthCM",
         "partdepth": "PartStatic.depthCM",
         "componentdepth": "PartStatic.depthCM",
+    },
+    # Product scope: part-instance flags.
+    ("product", "PartInstance"): {
+        "ismodular": "PartInstance.isModular",
+        "modular": "PartInstance.isModular",
+        "modularpart": "PartInstance.isModular",
+        "hasfailstate": "PartInstance.hasFailstate",
+        "failstate": "PartInstance.hasFailstate",
+        "failurestate": "PartInstance.hasFailstate",
+        "hasfailurestate": "PartInstance.hasFailstate",
     },
     # Product scope: material instance fields.
     ("product", "MaterialInstance"): {
@@ -212,6 +228,8 @@ _ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
 
     # Emission scope: activity data fields.
     ("emission", "ActivityData"): {
+        "activitytype": "ActivityData.activity_type",
+        "typeofactivity": "ActivityData.activity_type",
         "measuredamount": "ActivityData.quantity",
         "activityquantity": "ActivityData.quantity",
         "quantity": "ActivityData.quantity",
@@ -244,6 +262,15 @@ _ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
         "emissions": "GHGEmissionRecord.emissions_kg_co2e",
         "emissionskgco2e": "GHGEmissionRecord.emissions_kg_co2e",
         "carbonfootprint": "GHGEmissionRecord.emissions_kg_co2e",
+        "scope": "GHGEmissionRecord.scope",
+        "ghgscope": "GHGEmissionRecord.scope",
+        "emissionscope": "GHGEmissionRecord.scope",
+        "scope3category": "GHGEmissionRecord.scope3_category",
+        "calculationmethod": "GHGEmissionRecord.calculation_method",
+        "method": "GHGEmissionRecord.calculation_method",
+        "provenance": "GHGEmissionRecord.provenance",
+        "source": "GHGEmissionRecord.provenance",
+        "dataprovenance": "GHGEmissionRecord.provenance",
     },
 }
 

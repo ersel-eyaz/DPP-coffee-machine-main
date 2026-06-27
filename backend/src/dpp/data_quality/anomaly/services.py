@@ -21,6 +21,13 @@ from dpp.data_quality.anomaly.rules import (
     NumericRangeRule,
 )
 from dpp.data_quality.anomaly.schemas import AnomalyFinding, AnomalyResult
+from dpp.data_quality.anomaly.service_relations import (
+    SERVICE_CONCEPT_RELATION_HINTS,
+    SERVICE_RELATION_EVIDENCE,
+    evidence_for_diagnosis,
+    part_text_matches_keywords,
+    relation_hints_for_concept,
+)
 from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
 from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_KIND
@@ -874,11 +881,15 @@ def _apply_emission_scope_category_checks(result: HarmonizationResult) -> list[A
 
 def _concept_applicability_lookup() -> dict[str, tuple[str, ...]]:
     """Return applicable service types keyed by service concept id."""
-    lookup: dict[str, tuple[str, ...]] = {}
+    lookup: dict[str, set[str]] = {}
     for concepts in TEXT_CONCEPTS_BY_KIND.values():
         for concept in concepts:
-            lookup[concept.concept_id] = concept.applicable_service_types
-    return lookup
+            lookup[concept.concept_id] = set(concept.applicable_service_types)
+
+    for hint in SERVICE_CONCEPT_RELATION_HINTS:
+        lookup.setdefault(hint.concept_id, set()).update(hint.service_types)
+
+    return {concept_id: tuple(sorted(service_types)) for concept_id, service_types in lookup.items()}
 
 
 def _iter_text_report_entries(value: Any) -> list[dict[str, Any]]:
@@ -937,6 +948,30 @@ def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyF
                 if not isinstance(concept_id, str):
                     continue
 
+                if entry.get("inventory_status") == "review_candidate":
+                    findings.append(
+                        AnomalyFinding(
+                            check_id="service_review_candidate_concept",
+                            category="review",
+                            severity="info",
+                            message=(
+                                f"Service text in {field_name} matched review-candidate "
+                                f"concept {concept_id!r}."
+                            ),
+                            entity_id=entity.entity_id,
+                            entity_type=entity.entity_type,
+                            field_path=f"{entity.entity_type}.{field_name}",
+                            observed_value=concept_id,
+                            expected="core concept or user-confirmed review candidate",
+                            confidence=0.8,
+                            evidence={
+                                "original_value": original_value,
+                                "inventory_status": "review_candidate",
+                            },
+                            review_action="confirm_or_reject_review_candidate_concept",
+                        )
+                    )
+
                 applicable_types = applicable_by_concept.get(concept_id, ())
                 if applicable_types and entity.entity_type not in applicable_types:
                     findings.append(
@@ -955,6 +990,154 @@ def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyF
                             review_action="verify_service_step_type_or_concept",
                         )
                     )
+
+    return findings
+
+
+_SERVICE_PART_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
+    "RepairServiceStep": ("repairedPartId",),
+    "ReplaceServiceStep": ("replacedPartId",),
+    "CleaningServiceStep": ("cleanedPartId",),
+    "RefurbishmentServiceStep": ("repairedPartIds", "cleanedPartIds"),
+    "RemanufacturingServiceStep": ("repairedPartIds", "cleanedPartIds"),
+}
+
+
+def _flatten_part_references(value: Any) -> list[str]:
+    """Return string part references from a scalar, list, or JSON-LD reference."""
+    if value is None:
+        return []
+
+    if isinstance(value, str):
+        return [value]
+
+    if isinstance(value, dict):
+        if isinstance(value.get("@id"), str):
+            return [value["@id"]]
+        if isinstance(value.get("id"), str):
+            return [value["id"]]
+        return []
+
+    if isinstance(value, list):
+        references: list[str] = []
+        for item in value:
+            references.extend(_flatten_part_references(item))
+        return references
+
+    return []
+
+
+def _service_part_references(entity: HarmonizedEntity) -> list[str]:
+    """Return service-action part references preserved on a service entity."""
+    references: list[str] = []
+    for field_name in _SERVICE_PART_CONTEXT_FIELDS.get(entity.entity_type, ()):
+        field = entity.fields.get(f"{entity.entity_type}.{field_name}")
+        if field is not None:
+            references.extend(_flatten_part_references(effective_field_value(field)))
+
+    for existing_part_id, _new_part in entity.paired_embedded_entities.get("replacedAndNewParts", []):
+        references.append(existing_part_id)
+
+    return references
+
+
+def _known_service_part_keywords() -> tuple[str, ...]:
+    """Return all part keywords represented in the evidence registry."""
+    keywords: set[str] = set()
+    for evidence in SERVICE_RELATION_EVIDENCE:
+        keywords.update(evidence.part_keywords)
+    for hint in SERVICE_CONCEPT_RELATION_HINTS:
+        keywords.update(hint.part_keywords)
+    return tuple(sorted(keywords))
+
+
+def _part_references_are_informative(part_references: list[str]) -> bool:
+    """Return True if part references contain a known component keyword."""
+    known_keywords = _known_service_part_keywords()
+    return any(part_text_matches_keywords(reference, known_keywords) for reference in part_references)
+
+
+def _apply_service_relation_evidence_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
+    """
+    Flag service diagnosis/part combinations weakly supported by local evidence.
+
+    This is an evidence-based review prompt, not a hard compatibility matrix.
+    It only runs when the diagnosis was normalized to a concept with local
+    relation evidence and when the service part reference contains recognizable
+    component wording.
+    """
+    findings: list[AnomalyFinding] = []
+
+    for entity in result.iter_entities():
+        if not entity.entity_type.endswith("ServiceStep"):
+            continue
+
+        diagnosis = _field_value(entity, f"{entity.entity_type}.diagnose")
+        if not isinstance(diagnosis, str):
+            continue
+
+        evidence_entries = evidence_for_diagnosis(diagnosis)
+        relation_hints = relation_hints_for_concept(diagnosis)
+        if not evidence_entries and not relation_hints:
+            continue
+
+        part_references = _service_part_references(entity)
+        if not part_references or not _part_references_are_informative(part_references):
+            continue
+
+        expected_keywords = tuple(
+            sorted(
+                {
+                    keyword
+                    for evidence in evidence_entries
+                    for keyword in evidence.part_keywords
+                }
+                | {
+                    keyword
+                    for hint in relation_hints
+                    for keyword in hint.part_keywords
+                }
+            )
+        )
+        if any(part_text_matches_keywords(reference, expected_keywords) for reference in part_references):
+            continue
+
+        findings.append(
+            AnomalyFinding(
+                check_id="service_diagnosis_part_evidence_mismatch",
+                category="semantic",
+                severity="info",
+                message=(
+                    f"Service diagnosis concept {diagnosis!r} is weakly supported for the referenced "
+                    "service part according to local relation evidence."
+                ),
+                entity_id=entity.entity_id,
+                entity_type=entity.entity_type,
+                field_path=f"{entity.entity_type}.diagnose",
+                observed_value={
+                    "diagnosis_concept": diagnosis,
+                    "part_references": part_references,
+                    "service_type": entity.entity_type,
+                },
+                expected={
+                    "part_keywords_seen_in_relation_evidence": expected_keywords,
+                    "evidence_ids": [evidence.evidence_id for evidence in evidence_entries],
+                    "hint_ids": [hint.hint_id for hint in relation_hints],
+                },
+                confidence=0.65 if evidence_entries else 0.55,
+                evidence={
+                    "relation_sources": sorted({evidence.source for evidence in evidence_entries}),
+                    "relation_hint_sources": sorted({hint.source for hint in relation_hints}),
+                    "support_levels": sorted(
+                        {evidence.support_level for evidence in evidence_entries}
+                        | {hint.support_level for hint in relation_hints}
+                    ),
+                    "relation_notes": [evidence.note for evidence in evidence_entries],
+                    "interpretation": "review_prompt_not_hard_error",
+                },
+                review_action="verify_service_diagnosis_or_part_selection",
+            )
+        )
 
     return findings
 
@@ -989,6 +1172,7 @@ def analyze_harmonization_result(result: HarmonizationResult) -> AnomalyResult:
     elif result.scope_name == "service":
         findings.extend(_apply_numeric_range_rules(result, SERVICE_NUMERIC_RANGE_RULES))
         findings.extend(_apply_service_semantic_checks(result))
+        findings.extend(_apply_service_relation_evidence_checks(result))
 
     findings.extend(build_ml_anomaly_findings(extract_feature_rows(result)))
 

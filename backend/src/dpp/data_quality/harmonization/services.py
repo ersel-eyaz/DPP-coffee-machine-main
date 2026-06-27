@@ -38,6 +38,7 @@ from dpp.data_quality.harmonization.schemas import (
     PreservedRelation,
     RawField,
 )
+from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID
 from dpp.data_quality.scopes import SUPPORTED_SCOPES
 from dpp.data_quality.scopes.schemas import CanonicalField, ScopeDefinition
 
@@ -280,6 +281,7 @@ def _free_text_issues(
 
     for result in results:
         if result.status == "normalized":
+            concept = TEXT_CONCEPTS_BY_ID.get(str(result.normalized_concept))
             if result.method in {"alias", "fuzzy", "semantic", "mixed"}:
                 issues.append(
                     HarmonizationIssue(
@@ -288,6 +290,19 @@ def _free_text_issues(
                             f"Free-text value {result.original_text!r} was resolved by "
                             f"{result.method} match to {result.normalized_concept!r} "
                             f"with confidence {result.confidence:.2f}."
+                        ),
+                        entity_id=entity_id,
+                        entity_type=entity_type,
+                        field_label=field_label,
+                    )
+                )
+            if concept is not None and concept.inventory_status == "review_candidate":
+                issues.append(
+                    HarmonizationIssue(
+                        severity="info",
+                        message=(
+                            f"Free-text value {result.original_text!r} matched review-candidate "
+                            f"service concept {result.normalized_concept!r}; user confirmation is recommended."
                         ),
                         entity_id=entity_id,
                         entity_type=entity_type,
@@ -351,6 +366,9 @@ def _free_text_report_entry(result: Any) -> dict[str, Any]:
 
     if result.normalized_concept is not None:
         entry["normalized_value"] = result.normalized_concept
+        concept = TEXT_CONCEPTS_BY_ID.get(str(result.normalized_concept))
+        if concept is not None:
+            entry["inventory_status"] = concept.inventory_status
 
     if result.confidence is not None:
         entry["confidence"] = result.confidence
