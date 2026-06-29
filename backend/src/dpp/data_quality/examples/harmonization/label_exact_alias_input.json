@@ -26,11 +26,11 @@
     {
       "@id": "dpp-instance-exact-001",
       "@type": "dpp:DPPInstance",
-      "dpp:runtime": {
+      "dpp:operatingHours": {
         "value": 120,
         "unit": "hours"
       },
-      "dpp:brewCycles": 300,
+      "dpp:brewingCycles": 300,
       "dpp:cleaningCycles": 12
     }
   ]

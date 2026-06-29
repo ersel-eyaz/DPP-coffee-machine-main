@@ -29,19 +29,19 @@
     {
       "@id": "part-static-root-001",
       "@type": "dpp:PartStatic",
-      "dpp:componentWeight": {
+      "dpp:partWeight": {
         "value": 0.75,
         "unit": "kg"
       },
-      "dpp:componentHeight": {
+      "dpp:partHeight": {
         "value": 45,
         "unit": "cm"
       },
-      "dpp:componentWidth": {
+      "dpp:partWidth": {
         "value": 35,
         "unit": "cm"
       },
-      "dpp:componentDepth": {
+      "dpp:partDepth": {
         "value": 40,
         "unit": "cm"
       }
@@ -49,19 +49,19 @@
     {
       "@id": "part-static-heavy-001",
       "@type": "dpp:PartStatic",
-      "dpp:componentWeight": {
+      "dpp:partWeight": {
         "value": 2.4,
         "unit": "kg"
       },
-      "dpp:componentHeight": {
+      "dpp:partHeight": {
         "value": -5,
         "unit": "cm"
       },
-      "dpp:componentWidth": {
+      "dpp:partWidth": {
         "value": 27,
         "unit": "cm"
       },
-      "dpp:componentDepth": {
+      "dpp:partDepth": {
         "value": 35,
         "unit": "cm"
       }
@@ -69,19 +69,19 @@
     {
       "@id": "part-static-detached-001",
       "@type": "dpp:PartStatic",
-      "dpp:componentWeight": {
+      "dpp:partWeight": {
         "value": 1.2,
         "unit": "kg"
       },
-      "dpp:componentHeight": {
+      "dpp:partHeight": {
         "value": 10,
         "unit": "cm"
       },
-      "dpp:componentWidth": {
+      "dpp:partWidth": {
         "value": 10,
         "unit": "cm"
       },
-      "dpp:componentDepth": {
+      "dpp:partDepth": {
         "value": 10,
         "unit": "cm"
       }
@@ -118,7 +118,7 @@
             "value": 1.2,
             "unit": "kg"
           },
-          "dpp:recycledShare": {
+          "dpp:recycledPercent": {
             "value": 125,
             "unit": "percent"
           },
@@ -132,14 +132,14 @@
     {
       "@id": "dpp-instance-anomaly-001",
       "@type": "dpp:DPPInstance",
-      "dpp:runtime": {
+      "dpp:operatingHours": {
         "value": 120,
         "unit": "hours"
       },
-      "dpp:brewCycles": 100,
+      "dpp:brewingCycles": 100,
       "dpp:cleaningCycles": 140,
       "dpp:descalingCycles": 130,
-      "dpp:grinderCycles": 30,
+      "dpp:coffeeGrindingCycles": 30,
       "schema:isVariantOf": {
         "@id": "dpp-static-anomaly-001"
       },

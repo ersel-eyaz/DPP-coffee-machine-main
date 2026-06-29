@@ -11,17 +11,19 @@
         "Dripping after brew",
         "Pressure fluctuations"
       ],
-      "costEur": 79.0
+      "repairCost": 79.0,
+      "partRepaired": "part-valve-001"
     },
     {
       "@id": "service-replace-001",
       "@type": "dpp:ReplaceServiceStep",
       "diagnosis": "worn grinder burrs",
-      "symptoms": [
+      "observedSymptoms": [
         "watery espresso",
         "uneven puck surface"
       ],
-      "costEur": 59.0
+      "replacementCost": 59.0,
+      "replacedPart": "part-grinder-001"
     },
     {
       "@id": "service-cleaning-001",
@@ -31,7 +33,8 @@
         "Steam sputtering",
         "Noisy pump priming"
       ],
-      "costEur": 25.0
+      "cleaningCost": 25.0,
+      "cleanedPart": "part-water-path-001"
     },
     {
       "@id": "service-ambiguous-001",

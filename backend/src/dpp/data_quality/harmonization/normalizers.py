@@ -1,16 +1,25 @@
 """
-Unit and value normalization helpers for the harmonization layer.
+Unit, numeric value, and controlled-vocabulary normalization helpers.
 
-The module is intentionally conservative in its automatic decisions. It supports
-exact unit aliases first and a small fuzzy fallback for obvious spelling variants.
-It also supports exact controlled-vocabulary alias normalization, a conservative
-fuzzy fallback for obvious controlled-vocabulary spelling variants, and an
-optional embedding-based semantic fallback for unresolved controlled-vocabulary
-values.
+Unit metadata lives in harmonization.unit_registry. This module applies that
+registry conservatively: exact unit aliases first, then a small fuzzy fallback
+for obvious spelling variants, with field-specific source-unit restrictions
+enforced by the service layer. Field-bound product units normalize to the
+legacy-aligned target codes such as GRM, CM, and HRS; source-only units such as
+mg, mm, m, and min are accepted only when a mapped field allows conversion.
 
-The semantic fallback is lazy and optional: sentence-transformers is imported
-only when a semantic lookup is actually needed. Exact, alias, and fuzzy behavior
-therefore remains available without ML dependencies.
+Controlled-vocabulary definitions live in scopes.controlled_vocabularies:
+canonical serialized values, Python enum member aliases, and semantic profile
+texts are scope metadata rather than normalization logic. Human-readable dirty
+input aliases live in harmonization.enum_value_aliases and are generated from
+the documented LLM notebook workflow.
+
+This module combines those sources at runtime. It accepts canonical values
+directly, applies generated and model-code aliases, then uses a conservative
+fuzzy fallback and an optional embedding-based semantic fallback for unresolved
+values. The semantic fallback is lazy and optional: sentence-transformers is
+imported only when a semantic lookup is actually needed. Exact, alias, fuzzy,
+and unit behavior therefore remain available without ML dependencies.
 """
 
 from __future__ import annotations
@@ -20,6 +29,20 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from math import sqrt
 from typing import Any
+
+from dpp.data_quality.harmonization.enum_value_aliases import GENERATED_ENUM_VALUE_ALIASES
+from dpp.data_quality.scopes.controlled_vocabularies import (
+    CONTROLLED_VOCABULARY_PYTHON_MEMBER_ALIASES,
+    CONTROLLED_VOCABULARY_SEMANTIC_PROFILES,
+    CONTROLLED_VOCABULARY_VALUES,
+)
+from dpp.data_quality.harmonization.unit_registry import (
+    AMBIGUOUS_UNIT_KEYS,
+    CANONICAL_OUTPUT_UNITS,
+    CONVERSION_FACTORS,
+    UNIT_ALIASES,
+    source_units_for_target,
+)
 
 
 class NormalizationError(ValueError):
@@ -80,18 +103,6 @@ class EnumNormalizationCandidate:
     match_type: str
 
 
-@dataclass(frozen=True)
-class EnumSemanticProfile:
-    """Embedding support text for a canonical controlled-vocabulary value.
-
-    The text is used only for candidate ranking. Canonical output values still
-    come from the model's serialized enum values.
-    """
-
-    canonical_value: str
-    description: str
-
-
 def _to_float(value: Any) -> float:
     """Convert supported numeric inputs to float."""
     if isinstance(value, bool):
@@ -126,393 +137,25 @@ def _normalize_unit_key(unit: str) -> str:
     return normalized
 
 
-_UNIT_ALIASES: dict[str, str] = {
-    # mass
-    "g": "g",
-    "gram": "g",
-    "grams": "g",
-    "grm": "g",
-    "kg": "kg",
-    "kilogram": "kg",
-    "kilograms": "kg",
-    "mg": "mg",
-    "milligram": "mg",
-    "milligrams": "mg",
+def _controlled_vocabulary_lookup_entries(canonical_path: str) -> dict[str, tuple[str, str]]:
+    """Return raw lookup entries for one controlled-vocabulary field.
 
-    # length and distance
-    "mm": "mm",
-    "millimeter": "mm",
-    "millimeters": "mm",
-    "millimetre": "mm",
-    "millimetres": "mm",
-    "cm": "cm",
-    "centimeter": "cm",
-    "centimeters": "cm",
-    "centimetre": "cm",
-    "centimetres": "cm",
-    "m": "m",
-    "meter": "m",
-    "meters": "m",
-    "metre": "m",
-    "metres": "m",
-    "km": "km",
-    "kilometer": "km",
-    "kilometers": "km",
-    "kilometre": "km",
-    "kilometres": "km",
+    Canonical serialized values are accepted as canonical input. Python enum
+    member names and generated dirty-input variants are accepted as aliases.
+    """
+    entries: dict[str, tuple[str, str]] = {}
 
-    # time
-    "h": "h",
-    "hr": "h",
-    "hrs": "h",
-    "hour": "h",
-    "hours": "h",
-    "min": "min",
-    "mins": "min",
-    "minute": "min",
-    "minutes": "min",
+    for canonical_value in CONTROLLED_VOCABULARY_VALUES.get(canonical_path, ()):
+        entries[canonical_value] = (canonical_value, "canonical")
 
-    # percentages and ratios
-    "%": "percent",
-    "percent": "percent",
-    "percentage": "percent",
-    "ratio": "ratio",
-    "fraction": "ratio",
+    for alias, canonical_value in CONTROLLED_VOCABULARY_PYTHON_MEMBER_ALIASES.get(canonical_path, {}).items():
+        entries[alias] = (canonical_value, "alias")
 
-    # count-like values
-    "count": "count",
-    "counts": "count",
-    "cycle": "count",
-    "cycles": "count",
-    "piece": "count",
-    "pieces": "count",
+    for alias, canonical_value in GENERATED_ENUM_VALUE_ALIASES.get(canonical_path, {}).items():
+        entries[alias] = (canonical_value, "alias")
 
-    # emission/activity units
-    "kwh": "kWh",
-    "kwhr": "kWh",
-    "kilowatthour": "kWh",
-    "kilowatthours": "kWh",
-    "ltr": "ltr",
-    "l": "ltr",
-    "liter": "ltr",
-    "liters": "ltr",
-    "litre": "ltr",
-    "litres": "ltr",
-    "m3": "m3",
-    "cubicmeter": "m3",
-    "cubicmeters": "m3",
-    "cubicmetre": "m3",
-    "cubicmetres": "m3",
-    "tonne": "t",
-    "tonnes": "t",
-    "metricton": "t",
-    "metrictons": "t",
-    "kgco2e": "kgCO2e",
-    "kgco2eq": "kgCO2e",
-    "kgco2equivalent": "kgCO2e",
-    "kgco2e/kwh": "kgCO2e/kWh",
-    "kgco2eq/kwh": "kgCO2e/kWh",
-    "kgco2eperkwh": "kgCO2e/kWh",
-    "kgco2eqperkwh": "kgCO2e/kWh",
-    "kgco2equivalentperkilowatthour": "kgCO2e/kWh",
-    "kgco2e/kg": "kgCO2e/kg",
-    "kgco2eq/kg": "kgCO2e/kg",
-    "kgco2eperkg": "kgCO2e/kg",
-    "kgco2eqperkg": "kgCO2e/kg",
-    "kgco2equivalentperkilogram": "kgCO2e/kg",
-    "kgco2e/km": "kgCO2e/km",
-    "kgco2eq/km": "kgCO2e/km",
-    "kgco2eperkm": "kgCO2e/km",
-    "kgco2eqperkm": "kgCO2e/km",
-    "kgco2eperkilometer": "kgCO2e/km",
-    "kgco2eperkilometre": "kgCO2e/km",
-    "kgco2equivalentperkilometer": "kgCO2e/km",
-    "kgco2equivalentperkilometre": "kgCO2e/km",
-}
+    return entries
 
-# These short labels are too generic to auto-resolve without additional context.
-_AMBIGUOUS_UNIT_KEYS = {
-    "unit",
-    "units",
-    "u",
-    "t",
-}
-
-
-_CONTROLLED_VOCABULARY_ALIASES: dict[str, dict[str, str]] = {
-    "ActivityData.activity_type": {
-        # Canonical serialized enum values from the model.
-        "electricity_consumption": "electricity_consumption",
-        "distance_traveled": "distance_traveled",
-        "material_purchase": "material_purchase",
-        "water_usage": "water_usage",
-        "heat_usage": "heat_usage",
-        "waste_treatment": "waste_treatment",
-        "fuel_consumption": "fuel_consumption",
-
-        # Python enum member names are accepted as input aliases, but are not emitted.
-        "ELECTRICITY_CONSUMPTION": "electricity_consumption",
-        "DISTANCE_TRAVELED": "distance_traveled",
-        "MATERIAL_PURCHASE": "material_purchase",
-        "WATER_USAGE": "water_usage",
-        "HEAT_USAGE": "heat_usage",
-        "WASTE_TREATMENT": "waste_treatment",
-        "FUEL_CONSUMPTION": "fuel_consumption",
-
-        # Human-readable aliases.
-        "electricity consumption": "electricity_consumption",
-        "electricity use": "electricity_consumption",
-        "power consumption": "electricity_consumption",
-        "energy consumption": "electricity_consumption",
-        "distance traveled": "distance_traveled",
-        "distance travelled": "distance_traveled",
-        "travel distance": "distance_traveled",
-        "transport distance": "distance_traveled",
-        "material purchase": "material_purchase",
-        "purchased material": "material_purchase",
-        "material purchased": "material_purchase",
-        "materials purchased": "material_purchase",
-        "water usage": "water_usage",
-        "water consumption": "water_usage",
-        "heat usage": "heat_usage",
-        "heating usage": "heat_usage",
-        "heat consumption": "heat_usage",
-        "waste treatment": "waste_treatment",
-        "treatment of waste": "waste_treatment",
-        "waste processing": "waste_treatment",
-        "fuel consumption": "fuel_consumption",
-        "fuel use": "fuel_consumption",
-        "fuel used": "fuel_consumption",
-    },
-    "GHGEmissionRecord.scope": {
-        # Canonical serialized enum values from the model.
-        "scope_1": "scope_1",
-        "scope_2": "scope_2",
-        "scope_3": "scope_3",
-
-        # Python enum member names are accepted as input aliases, but are not emitted.
-        "SCOPE_1": "scope_1",
-        "SCOPE_2": "scope_2",
-        "SCOPE_3": "scope_3",
-
-        # Human-readable aliases.
-        "scope1": "scope_1",
-        "scope 1": "scope_1",
-        "scope i": "scope_1",
-        "scope one": "scope_1",
-        "direct emissions": "scope_1",
-        "scope2": "scope_2",
-        "scope 2": "scope_2",
-        "scope ii": "scope_2",
-        "scope two": "scope_2",
-        "purchased energy": "scope_2",
-        "indirect energy emissions": "scope_2",
-        "scope3": "scope_3",
-        "scope 3": "scope_3",
-        "scope iii": "scope_3",
-        "scope three": "scope_3",
-        "value chain emissions": "scope_3",
-        "other indirect emissions": "scope_3",
-    },
-    "GHGEmissionRecord.scope3_category": {
-        # Canonical serialized enum values from the model.
-        "purchased_goods_and_services": "purchased_goods_and_services",
-        "capital_goods": "capital_goods",
-        "fuel_and_energy_related_activities": "fuel_and_energy_related_activities",
-        "upstream_transportation_and_distribution": "upstream_transportation_and_distribution",
-        "waste_generated_in_operations": "waste_generated_in_operations",
-        "business_travel": "business_travel",
-        "employee_commuting": "employee_commuting",
-        "upstream_leased_assets": "upstream_leased_assets",
-        "downstream_transportation_and_distribution": "downstream_transportation_and_distribution",
-        "processing_of_sold_products": "processing_of_sold_products",
-        "use_of_sold_products": "use_of_sold_products",
-        "end_of_life_treatment": "end_of_life_treatment",
-        "downstream_leased_assets": "downstream_leased_assets",
-        "franchises": "franchises",
-        "investments": "investments",
-
-        # Python enum member names are accepted as input aliases, but are not emitted.
-        "PURCHASED_GOODS_AND_SERVICES": "purchased_goods_and_services",
-        "CAPITAL_GOODS": "capital_goods",
-        "FUEL_AND_ENERGY_RELATED_ACTIVITIES": "fuel_and_energy_related_activities",
-        "UPSTREAM_TRANSPORTATION_AND_DISTRIBUTION": "upstream_transportation_and_distribution",
-        "WASTE_GENERATED_IN_OPERATIONS": "waste_generated_in_operations",
-        "BUSINESS_TRAVEL": "business_travel",
-        "EMPLOYEE_COMMUTING": "employee_commuting",
-        "UPSTREAM_LEASED_ASSETS": "upstream_leased_assets",
-        "DOWNSTREAM_TRANSPORTATION_AND_DISTRIBUTION": "downstream_transportation_and_distribution",
-        "PROCESSING_OF_SOLD_PRODUCTS": "processing_of_sold_products",
-        "USE_OF_SOLD_PRODUCTS": "use_of_sold_products",
-        "END_OF_LIFE_TREATMENT": "end_of_life_treatment",
-        "DOWNSTREAM_LEASED_ASSETS": "downstream_leased_assets",
-        "FRANCHISES": "franchises",
-        "INVESTMENTS": "investments",
-
-        # Human-readable aliases.
-        "purchased goods and services": "purchased_goods_and_services",
-        "purchased goods": "purchased_goods_and_services",
-        "purchased materials": "purchased_goods_and_services",
-        "purchased services": "purchased_goods_and_services",
-        "capital goods": "capital_goods",
-        "capital equipment": "capital_goods",
-        "fuel and energy related activities": "fuel_and_energy_related_activities",
-        "fuel and energy activities": "fuel_and_energy_related_activities",
-        "fuel energy activities": "fuel_and_energy_related_activities",
-        "energy related activities": "fuel_and_energy_related_activities",
-        "upstream transportation and distribution": "upstream_transportation_and_distribution",
-        "upstream transport and distribution": "upstream_transportation_and_distribution",
-        "upstream transport": "upstream_transportation_and_distribution",
-        "upstream distribution": "upstream_transportation_and_distribution",
-        "upstream logistics": "upstream_transportation_and_distribution",
-        "waste generated in operations": "waste_generated_in_operations",
-        "operational waste": "waste_generated_in_operations",
-        "operations waste": "waste_generated_in_operations",
-        "business travel": "business_travel",
-        "business trip": "business_travel",
-        "work travel": "business_travel",
-        "employee commuting": "employee_commuting",
-        "staff commuting": "employee_commuting",
-        "commuting": "employee_commuting",
-        "upstream leased assets": "upstream_leased_assets",
-        "downstream transportation and distribution": "downstream_transportation_and_distribution",
-        "downstream transport and distribution": "downstream_transportation_and_distribution",
-        "downstream transport": "downstream_transportation_and_distribution",
-        "downstream distribution": "downstream_transportation_and_distribution",
-        "downstream logistics": "downstream_transportation_and_distribution",
-        "processing of sold products": "processing_of_sold_products",
-        "sold product processing": "processing_of_sold_products",
-        "processing sold products": "processing_of_sold_products",
-        "use of sold products": "use_of_sold_products",
-        "sold product use": "use_of_sold_products",
-        "product use": "use_of_sold_products",
-        "product use phase": "use_of_sold_products",
-        "end of life treatment": "end_of_life_treatment",
-        "end-of-life treatment": "end_of_life_treatment",
-        "eol treatment": "end_of_life_treatment",
-        "downstream leased assets": "downstream_leased_assets",
-        "franchise": "franchises",
-        "franchises": "franchises",
-        "investment": "investments",
-        "investments": "investments",
-    },
-}
-
-# Semantic support texts for controlled-vocabulary values.
-#
-# Scope 3 category descriptions are derived from GHG Protocol Corporate Value
-# Chain (Scope 3) Accounting and Reporting Standard, chapter 5, especially
-# table 5.4 ("Description and boundaries of scope 3 categories"). The text is
-# intentionally compact because it is used as embedding input, not as a full
-# documentation source.
-_CONTROLLED_VOCABULARY_SEMANTIC_PROFILES: dict[str, dict[str, EnumSemanticProfile]] = {
-    "ActivityData.activity_type": {
-        "electricity_consumption": EnumSemanticProfile(
-            canonical_value="electricity_consumption",
-            description="electricity consumption; kilowatt-hours of electricity consumed; electrical energy use as activity data",
-        ),
-        "distance_traveled": EnumSemanticProfile(
-            canonical_value="distance_traveled",
-            description="distance traveled; kilometers of transport distance; movement by road rail sea or air as activity data",
-        ),
-        "material_purchase": EnumSemanticProfile(
-            canonical_value="material_purchase",
-            description="material purchase; kilograms of material consumed or acquired; purchased material amount as activity data",
-        ),
-        "water_usage": EnumSemanticProfile(
-            canonical_value="water_usage",
-            description="water usage; water consumption; cubic meters or liters of water used as activity data",
-        ),
-        "heat_usage": EnumSemanticProfile(
-            canonical_value="heat_usage",
-            description="heat usage; purchased or consumed heat energy; heating or thermal energy use as activity data",
-        ),
-        "waste_treatment": EnumSemanticProfile(
-            canonical_value="waste_treatment",
-            description="waste treatment; kilograms of waste generated; disposal treatment recycling incineration or wastewater treatment as activity data",
-        ),
-        "fuel_consumption": EnumSemanticProfile(
-            canonical_value="fuel_consumption",
-            description="fuel consumption; liters or kilograms of fuel consumed; fuel use by vehicles machines or processes as activity data",
-        ),
-    },
-    "GHGEmissionRecord.scope": {
-        "scope_1": EnumSemanticProfile(
-            canonical_value="scope_1",
-            description="direct greenhouse gas emissions from operations owned or controlled by the reporting company such as company facilities and vehicles",
-        ),
-        "scope_2": EnumSemanticProfile(
-            canonical_value="scope_2",
-            description="indirect greenhouse gas emissions from purchased or acquired electricity steam heating or cooling consumed by the reporting company",
-        ),
-        "scope_3": EnumSemanticProfile(
-            canonical_value="scope_3",
-            description="all other indirect greenhouse gas emissions in the reporting company's upstream and downstream value chain",
-        ),
-    },
-    "GHGEmissionRecord.scope3_category": {
-        "purchased_goods_and_services": EnumSemanticProfile(
-            canonical_value="purchased_goods_and_services",
-            description="purchased goods and services; extraction production and transportation of goods and services purchased or acquired in the reporting year; upstream cradle-to-gate emissions",
-        ),
-        "capital_goods": EnumSemanticProfile(
-            canonical_value="capital_goods",
-            description="capital goods; extraction production and transportation of capital goods purchased or acquired in the reporting year; equipment machinery buildings facilities and vehicles",
-        ),
-        "fuel_and_energy_related_activities": EnumSemanticProfile(
-            canonical_value="fuel_and_energy_related_activities",
-            description="fuel and energy related activities not included in scope 1 or scope 2; upstream emissions of purchased fuels and purchased electricity; transmission and distribution losses",
-        ),
-        "upstream_transportation_and_distribution": EnumSemanticProfile(
-            canonical_value="upstream_transportation_and_distribution",
-            description="upstream transportation and distribution; transportation and distribution of purchased products between tier 1 suppliers and own operations; purchased inbound outbound and internal third-party logistics",
-        ),
-        "waste_generated_in_operations": EnumSemanticProfile(
-            canonical_value="waste_generated_in_operations",
-            description="waste generated in operations; third-party disposal and treatment of waste from owned or controlled operations; solid waste wastewater landfill recycling incineration composting",
-        ),
-        "business_travel": EnumSemanticProfile(
-            canonical_value="business_travel",
-            description="business travel; transportation of employees for business-related activities in third-party vehicles such as aircraft trains buses rental cars or passenger cars",
-        ),
-        "employee_commuting": EnumSemanticProfile(
-            canonical_value="employee_commuting",
-            description="employee commuting; transportation of employees between homes and worksites; automobile bus rail air travel and optional teleworking",
-        ),
-        "upstream_leased_assets": EnumSemanticProfile(
-            canonical_value="upstream_leased_assets",
-            description="upstream leased assets; operation of assets leased by the reporting company as lessee not included in scope 1 or scope 2",
-        ),
-        "downstream_transportation_and_distribution": EnumSemanticProfile(
-            canonical_value="downstream_transportation_and_distribution",
-            description="downstream transportation and distribution; transportation distribution retail and storage of sold products between the reporting company's operations and the end consumer when not paid for by the reporting company",
-        ),
-        "processing_of_sold_products": EnumSemanticProfile(
-            canonical_value="processing_of_sold_products",
-            description="processing of sold products; processing of sold intermediate products by downstream companies after sale before use by the end consumer",
-        ),
-        "use_of_sold_products": EnumSemanticProfile(
-            canonical_value="use_of_sold_products",
-            description="use of sold products; end use of goods and services sold in the reporting year; direct use-phase emissions over expected lifetime from products consuming energy fuels feedstocks or emitting greenhouse gases",
-        ),
-        "end_of_life_treatment": EnumSemanticProfile(
-            canonical_value="end_of_life_treatment",
-            description="end-of-life treatment of sold products; waste disposal and treatment of sold products at the end of their life such as landfill incineration recycling or wastewater treatment",
-        ),
-        "downstream_leased_assets": EnumSemanticProfile(
-            canonical_value="downstream_leased_assets",
-            description="downstream leased assets; operation of assets owned by the reporting company as lessor and leased to other entities not included in scope 1 or scope 2",
-        ),
-        "franchises": EnumSemanticProfile(
-            canonical_value="franchises",
-            description="franchises; operation of franchises in the reporting year not included in scope 1 or scope 2; emissions of franchisees reported by franchisor",
-        ),
-        "investments": EnumSemanticProfile(
-            canonical_value="investments",
-            description="investments; operation of investments including equity debt investments and project finance in the reporting year not included in scope 1 or scope 2",
-        ),
-    },
-}
 
 def _normalize_enum_key(value: str) -> str:
     """Normalize a controlled-vocabulary value for canonical and alias lookup."""
@@ -523,11 +166,15 @@ def _normalize_enum_key(value: str) -> str:
 def _enum_lookup_table(canonical_path: str) -> dict[str, tuple[str, str]]:
     """Return normalized enum aliases mapped to canonical value and match type."""
     lookup: dict[str, tuple[str, str]] = {}
-    for alias, canonical_value in _CONTROLLED_VOCABULARY_ALIASES.get(canonical_path, {}).items():
-        match_type = "canonical" if alias == canonical_value else "alias"
+    for alias, (canonical_value, match_type) in _controlled_vocabulary_lookup_entries(canonical_path).items():
         lookup[_normalize_enum_key(alias)] = (canonical_value, match_type)
         lookup[_normalize_enum_key(canonical_value)] = (canonical_value, "canonical")
     return lookup
+
+
+def canonical_enum_values_for_path(canonical_path: str) -> tuple[str, ...]:
+    """Return the canonical values configured for one controlled-vocabulary field."""
+    return tuple(CONTROLLED_VOCABULARY_VALUES.get(canonical_path, ()))
 
 
 def _similarity(left: str, right: str) -> float:
@@ -633,7 +280,7 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 @lru_cache(maxsize=64)
 def _semantic_profile_embeddings(canonical_path: str) -> tuple[tuple[str, str, tuple[float, ...]], ...]:
     """Return cached embeddings for the semantic profiles of one controlled field."""
-    profiles = _CONTROLLED_VOCABULARY_SEMANTIC_PROFILES.get(canonical_path, {})
+    profiles = CONTROLLED_VOCABULARY_SEMANTIC_PROFILES.get(canonical_path, {})
     if not profiles:
         return ()
 
@@ -756,7 +403,7 @@ def normalize_enum_value(canonical_path: str, value: Any) -> str:
 
 def _known_canonical_units() -> set[str]:
     """Return all canonical units known by the normalizer."""
-    return set(_UNIT_ALIASES.values())
+    return set(CANONICAL_OUTPUT_UNITS)
 
 
 def find_unit_label_candidates(
@@ -780,9 +427,10 @@ def find_unit_label_candidates(
         return []
 
     allowed = allowed_units or _known_canonical_units()
+    has_field_context = allowed_units is not None
 
-    exact = _UNIT_ALIASES.get(key)
-    if exact is not None and exact in allowed and key not in _AMBIGUOUS_UNIT_KEYS:
+    exact = UNIT_ALIASES.get(key)
+    if exact is not None and exact in allowed and (has_field_context or key not in AMBIGUOUS_UNIT_KEYS):
         return [
             UnitNormalizationCandidate(
                 original_unit=unit,
@@ -793,10 +441,10 @@ def find_unit_label_candidates(
         ]
 
     candidates_by_unit: dict[str, UnitNormalizationCandidate] = {}
-    for alias, canonical_unit in _UNIT_ALIASES.items():
+    for alias, canonical_unit in UNIT_ALIASES.items():
         if canonical_unit not in allowed:
             continue
-        if alias in _AMBIGUOUS_UNIT_KEYS:
+        if alias in AMBIGUOUS_UNIT_KEYS and not has_field_context:
             continue
 
         score = _similarity(key, alias)
@@ -858,38 +506,22 @@ def normalize_unit_label(unit: str | None) -> str | None:
     return candidate.canonical_unit
 
 
-def _allowed_sources_for_target(target_unit: str) -> set[str]:
+def allowed_source_units_for_target(target_unit: str) -> set[str]:
     """Return unit families that can be converted safely into a target unit."""
-    return {
-        "g": {"mg", "g", "kg"},
-        "cm": {"mm", "cm", "m"},
-        "km": {"m", "km"},
-        "h": {"min", "h"},
-        "percent": {"percent", "ratio"},
-        "ratio": {"percent", "ratio"},
-        "count": {"count"},
-        "kWh": {"kWh"},
-        "kg": {"kg"},
-        "kgCO2e": {"kgCO2e"},
-        "kgCO2e/kWh": {"kgCO2e/kWh"},
-        "kgCO2e/kg": {"kgCO2e/kg"},
-        "kgCO2e/km": {"kgCO2e/km"},
-        "ltr": {"ltr"},
-        "m3": {"m3"},
-        "t": {"t"},
-    }.get(target_unit, {target_unit})
+    return set(source_units_for_target(target_unit))
 
 
 def normalize_value_to_unit(value: Any, source_unit: str | None, target_unit: str) -> NormalizedValue:
     """
     Normalize a numeric value from source_unit to target_unit.
 
-    Supported target units include g, cm, km, h, percent, ratio, count, kWh, kg,
-    kgCO2e, kgCO2e/kWh, kgCO2e/kg, and kgCO2e/km.
+    Supported target units include legacy field units such as GRM, CM, and HRS,
+    plus emission/activity units such as km, kWh, kg, kgCO2e, kgCO2e/kWh,
+    kgCO2e/kg, and kgCO2e/km.
     """
 
     numeric = _to_float(value)
-    normalized_target_candidate = resolve_unit_label(target_unit)
+    normalized_target_candidate = resolve_unit_label(target_unit, allowed_units={target_unit})
 
     if normalized_target_candidate is None:
         raise NormalizationError(f"Unsupported target unit: {target_unit!r}")
@@ -901,11 +533,13 @@ def normalize_value_to_unit(value: Any, source_unit: str | None, target_unit: st
 
     source_candidate = resolve_unit_label(
         source_unit,
-        allowed_units=_allowed_sources_for_target(normalized_target),
+        allowed_units=allowed_source_units_for_target(normalized_target),
     )
     if source_candidate is None:
+        allowed_units = ", ".join(sorted(allowed_source_units_for_target(normalized_target)))
         raise NormalizationError(
-            f"Unsupported or ambiguous source unit {source_unit!r} for target unit {normalized_target!r}"
+            f"Unsupported or ambiguous source unit {source_unit!r} for target unit "
+            f"{normalized_target!r}. Expected one of: {allowed_units}."
         )
 
     normalized_source = source_candidate.canonical_unit
@@ -913,44 +547,7 @@ def normalize_value_to_unit(value: Any, source_unit: str | None, target_unit: st
     if normalized_source == normalized_target:
         return NormalizedValue(value=numeric, unit=normalized_target)
 
-    conversion_factors: dict[tuple[str, str], float] = {
-        # mass to gram
-        ("kg", "g"): 1000.0,
-        ("g", "g"): 1.0,
-        ("mg", "g"): 0.001,
-
-        # length to centimeter
-        ("mm", "cm"): 0.1,
-        ("cm", "cm"): 1.0,
-        ("m", "cm"): 100.0,
-
-        # distance to kilometer
-        ("m", "km"): 0.001,
-        ("km", "km"): 1.0,
-
-        # time to hours
-        ("min", "h"): 1.0 / 60.0,
-        ("h", "h"): 1.0,
-
-        # ratio / percent
-        ("percent", "percent"): 1.0,
-        ("ratio", "ratio"): 1.0,
-        ("percent", "ratio"): 0.01,
-        ("ratio", "percent"): 100.0,
-
-        # counts
-        ("count", "count"): 1.0,
-
-        # emission/activity units without scale conversion
-        ("kWh", "kWh"): 1.0,
-        ("kg", "kg"): 1.0,
-        ("kgCO2e", "kgCO2e"): 1.0,
-        ("kgCO2e/kWh", "kgCO2e/kWh"): 1.0,
-        ("kgCO2e/kg", "kgCO2e/kg"): 1.0,
-        ("kgCO2e/km", "kgCO2e/km"): 1.0,
-    }
-
-    factor = conversion_factors.get((normalized_source, normalized_target))
+    factor = CONVERSION_FACTORS.get((normalized_source, normalized_target))
     if factor is None:
         raise NormalizationError(
             f"Unsupported unit conversion: {normalized_source!r} -> {normalized_target!r}"

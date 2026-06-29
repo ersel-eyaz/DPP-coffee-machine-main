@@ -6,7 +6,7 @@
     {
       "@id": "record-enum-001",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:totalCarbon": {
+      "dpp:reportedEmissions": {
         "value": 52.5,
         "unit": "kgCO2e"
       },
@@ -14,33 +14,33 @@
       "dpp:scope3Category": "purchased goods and services",
       "dpp:activity": {
         "@type": "dpp:ActivityData",
-        "dpp:measuredAmount": 125,
+        "dpp:activityQuantity": 125,
         "dpp:activityUnit": "kWh",
         "dpp:activityType": "electricity consumption"
       },
       "dpp:emissionFactor": {
         "@type": "dpp:EmissionFactor",
-        "dpp:co2Factor": 0.42,
+        "dpp:factorValue": 0.42,
         "dpp:factorUnit": "kgCO2e/kWh"
       }
     },
     {
       "@id": "record-enum-002",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:totalCarbon": {
+      "dpp:reportedEmissions": {
         "value": 10.0,
         "unit": "kgCO2e"
       },
       "dpp:scope": "SCOPE_2",
       "dpp:activity": {
         "@type": "dpp:ActivityData",
-        "dpp:measuredAmount": 125,
+        "dpp:activityQuantity": 125,
         "dpp:activityUnit": "kWh",
         "dpp:activityType": "electricity consumption"
       },
       "dpp:emissionFactor": {
         "@type": "dpp:EmissionFactor",
-        "dpp:co2Factor": 0.42,
+        "dpp:factorValue": 0.42,
         "dpp:factorUnit": "kgCO2e/kWh"
       }
     }

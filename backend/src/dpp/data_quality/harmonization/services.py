@@ -15,12 +15,15 @@ from dpp.data_quality.harmonization.free_text import (
     normalize_text_values,
 )
 from dpp.data_quality.harmonization.mapper import (
+    AMBIGUOUS_FUZZY_THRESHOLD,
     AUTO_FUZZY_THRESHOLD,
     find_field_label_candidates,
     map_field_label,
 )
 from dpp.data_quality.harmonization.normalizers import (
     NormalizationError,
+    allowed_source_units_for_target,
+    canonical_enum_values_for_path,
     find_unit_label_candidates,
     normalize_enum_value,
     normalize_unit_label,
@@ -29,6 +32,7 @@ from dpp.data_quality.harmonization.normalizers import (
     resolve_enum_value,
     resolve_unit_label,
 )
+from dpp.data_quality.harmonization.unit_registry import explicit_unit_values_for_field
 from dpp.data_quality.harmonization.parser import ParsedEntity, ParsedRelation, parse_jsonld_document
 from dpp.data_quality.harmonization.schemas import (
     HarmonizationIssue,
@@ -59,6 +63,11 @@ _RELATION_INPUT_ALIASES: dict[tuple[str, str], str] = {
 def _fields_by_path(scope: ScopeDefinition) -> dict[str, CanonicalField]:
     """Return scope fields keyed by canonical path."""
     return {field.path: field for field in scope.fields}
+
+
+def _field_paths_for_entity(scope: ScopeDefinition, entity_type: str) -> tuple[str, ...]:
+    """Return canonical field paths available for one entity in a selected scope."""
+    return tuple(field.path for field in scope.fields if field.entity_type == entity_type)
 
 
 def _relation_names_for_entity(scope: ScopeDefinition, entity_type: str) -> set[str]:
@@ -156,26 +165,47 @@ def _target_unit_for_activity_quantity(source_unit: str | None) -> str | None:
     not have one globally fixed target unit. The unit enum determines the target.
     """
 
-    normalized_source = normalize_unit_label(source_unit)
+    normalized_source = _normalize_activity_source_unit(source_unit)
 
     if normalized_source in {"m", "km"}:
         return "km"
 
-    if normalized_source in {"kg", "kWh", "ltr", "m3", "t", "count"}:
+    if normalized_source in {"kg", "kWh", "ltr", "m3", "t", "unit"}:
         return normalized_source
 
     return None
 
 
-def _normalize_unit_field(value: Any) -> str:
+def _normalize_activity_source_unit(source_unit: str | None) -> str | None:
+    """Normalize an ActivityData source unit before quantity conversion."""
+    if source_unit is None:
+        return None
+
+    candidate = resolve_unit_label(source_unit, allowed_units=_allowed_units_for_unit_field("ActivityData.unit"))
+    return candidate.canonical_unit if candidate is not None else None
+
+
+def _allowed_units_for_unit_field(canonical_path: str) -> set[str] | None:
+    """Return allowed canonical unit values for explicit legacy unit-code fields."""
+    allowed = explicit_unit_values_for_field(canonical_path)
+    return set(allowed) if allowed is not None else None
+
+
+def _normalize_unit_field(
+    value: Any,
+    canonical_path: str,
+    *,
+    preserve_activity_source: bool = False,
+) -> str:
     """Normalize an explicit unit field value with exact or conservative fuzzy matching."""
     scalar_value, _ = _extract_value_and_unit(value)
     if not isinstance(scalar_value, str):
         raise NormalizationError(f"Unit field must contain a string value, got {type(scalar_value).__name__}")
 
-    candidate = resolve_unit_label(scalar_value)
+    allowed_units = _allowed_units_for_unit_field(canonical_path)
+    candidate = resolve_unit_label(scalar_value, allowed_units=allowed_units)
     if candidate is None:
-        candidates = find_unit_label_candidates(scalar_value)
+        candidates = find_unit_label_candidates(scalar_value, allowed_units=allowed_units)
         if candidates:
             candidate_text = ", ".join(
                 f"{candidate.canonical_unit} ({candidate.confidence:.2f})"
@@ -186,6 +216,12 @@ def _normalize_unit_field(value: Any) -> str:
             )
 
         raise NormalizationError(f"Unsupported unit label: {scalar_value!r}")
+
+    if canonical_path == "ActivityData.unit" and not preserve_activity_source:
+        target_unit = _target_unit_for_activity_quantity(candidate.canonical_unit)
+        if target_unit is None:
+            raise NormalizationError(f"Unsupported activity unit label: {scalar_value!r}")
+        return target_unit
 
     return candidate.canonical_unit
 
@@ -207,7 +243,11 @@ def _collect_explicit_units(parsed_entity: ParsedEntity, scope_name: str) -> dic
             continue
 
         try:
-            explicit_units[mapping.canonical_path] = _normalize_unit_field(parsed_field.value)
+            explicit_units[mapping.canonical_path] = _normalize_unit_field(
+                parsed_field.value,
+                mapping.canonical_path,
+                preserve_activity_source=True,
+            )
         except NormalizationError:
             continue
 
@@ -231,13 +271,57 @@ def _get_unit_candidate_for_trace(
     if unit_label is None:
         return None, None
 
-    return unit_label, resolve_unit_label(unit_label)
+    allowed_units = _allowed_units_for_unit_field(canonical_field.path)
+    return unit_label, resolve_unit_label(unit_label, allowed_units=allowed_units)
 
 
 def _normalize_controlled_vocabulary_field(canonical_path: str, value: Any) -> str:
     """Normalize a controlled-vocabulary field by canonical match, alias, or conservative fuzzy fallback."""
     scalar_value, _ = _extract_value_and_unit(value)
     return normalize_enum_value(canonical_path, scalar_value)
+
+
+def _expected_unit_hint(canonical_field: CanonicalField) -> str | None:
+    """Return a field-specific expected-unit hint for failed value normalization."""
+    if canonical_field.target_unit is None:
+        return None
+
+    allowed_units = ", ".join(sorted(allowed_source_units_for_target(canonical_field.target_unit)))
+    return (
+        f" Field {canonical_field.path!r} expects values convertible to "
+        f"{canonical_field.target_unit!r}; accepted source units: {allowed_units}."
+    )
+
+
+def _expected_explicit_unit_hint(canonical_path: str) -> str | None:
+    """Return expected values for explicit legacy unit-code fields."""
+    allowed_units = _allowed_units_for_unit_field(canonical_path)
+    if allowed_units is None:
+        return None
+
+    return f" Expected unit values for {canonical_path!r}: {', '.join(sorted(allowed_units))}."
+
+
+def _expected_value_hint(canonical_field: CanonicalField) -> str:
+    """Return field-aware value guidance after a mapped field fails value normalization."""
+    if canonical_field.role == "controlled_vocabulary":
+        options = canonical_enum_values_for_path(canonical_field.path)
+        if options:
+            return f" Expected values for {canonical_field.path!r}: {', '.join(options)}."
+
+    if canonical_field.role == "unit_harmonization":
+        unit_hint = _expected_explicit_unit_hint(canonical_field.path)
+        if unit_hint is not None:
+            return unit_hint
+
+    unit_hint = _expected_unit_hint(canonical_field)
+    if unit_hint is not None:
+        return unit_hint
+
+    if canonical_field.role == "label_harmonization":
+        return f" Field {canonical_field.path!r} expects a numeric value."
+
+    return ""
 
 
 def _free_text_kind_for_path(canonical_path: str) -> str:
@@ -412,7 +496,7 @@ def _normalize_mapped_value(
     """
 
     if canonical_field.role == "unit_harmonization":
-        normalized_unit = _normalize_unit_field(value)
+        normalized_unit = _normalize_unit_field(value, canonical_field.path)
         return normalized_unit, None
 
     if canonical_field.role == "controlled_vocabulary":
@@ -509,9 +593,14 @@ def _suppress_explicit_unit_metadata(
         )
 
 
-def _resolve_field_mapping(label: str, scope_name: str, entity_type: str) -> tuple[Any, list[HarmonizationIssue]]:
+def _resolve_field_mapping(
+    label: str,
+    scope: ScopeDefinition,
+    entity_type: str,
+) -> tuple[Any, list[HarmonizationIssue]]:
     """Resolve a field label with exact mapping first and conservative fuzzy fallback second."""
 
+    scope_name = scope.name
     mapping = map_field_label(label, scope_name, entity_type=entity_type)
     if mapping is not None:
         return mapping, []
@@ -533,7 +622,8 @@ def _resolve_field_mapping(label: str, scope_name: str, entity_type: str) -> tup
                     severity="info",
                     message=(
                         f"Field label {label!r} was mapped by fuzzy fallback to "
-                        f"{top_candidate.canonical_path!r} with confidence {top_candidate.confidence:.2f}."
+                        f"{top_candidate.canonical_path!r} with confidence {top_candidate.confidence:.2f} "
+                        f"(automatic threshold {AUTO_FUZZY_THRESHOLD:.2f}, minimum margin 0.05)."
                     ),
                     entity_type=entity_type,
                     field_label=label,
@@ -549,14 +639,31 @@ def _resolve_field_mapping(label: str, scope_name: str, entity_type: str) -> tup
                 severity="warning",
                 message=(
                     f"Field label {label!r} could not be mapped exactly. "
-                    f"Possible candidates: {candidate_text}."
+                    f"Possible candidates: {candidate_text}. Automatic mapping requires "
+                    f"top confidence >= {AUTO_FUZZY_THRESHOLD:.2f} and margin >= 0.05."
                 ),
                 entity_type=entity_type,
                 field_label=label,
             )
         ]
 
-    return None, []
+    available_fields = _field_paths_for_entity(scope, entity_type)
+    available_text = ""
+    if available_fields:
+        available_text = f" Available fields for {entity_type!r}: {', '.join(available_fields)}."
+
+    return None, [
+        HarmonizationIssue(
+            severity="warning",
+            message=(
+                f"Field label {label!r} could not be mapped to a supported "
+                f"field for entity type {entity_type!r}. No fuzzy candidate reached "
+                f"the reporting threshold {AMBIGUOUS_FUZZY_THRESHOLD:.2f}.{available_text}"
+            ),
+            entity_type=entity_type,
+            field_label=label,
+        )
+    ]
 
 
 def harmonize_document(document: dict[str, Any], scope_name: str) -> HarmonizationResult:
@@ -647,7 +754,7 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
         for parsed_field in parsed_entity.fields:
             mapping, mapping_issues = _resolve_field_mapping(
                 label=parsed_field.label,
-                scope_name=scope_name,
+                scope=scope,
                 entity_type=parsed_entity.entity_type,
             )
 
@@ -867,10 +974,15 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                 normalized_value = None
                 normalized_unit = None
                 status = "error"
+                error_detail = str(exc).rstrip(".")
+                expected_hint = _expected_value_hint(canonical_field)
                 issues.append(
                     HarmonizationIssue(
                         severity="error",
-                        message=str(exc),
+                        message=(
+                            f"Value for {canonical_field.path!r} could not be normalized: "
+                            f"{error_detail}.{expected_hint}"
+                        ),
                         entity_id=parsed_entity.entity_id,
                         entity_type=parsed_entity.entity_type,
                         field_label=parsed_field.label,

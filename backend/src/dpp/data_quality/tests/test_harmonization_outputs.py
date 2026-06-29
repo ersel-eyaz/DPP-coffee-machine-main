@@ -7,7 +7,12 @@ import unittest
 from pathlib import Path
 
 from dpp.data_quality.harmonization.mapper import map_field_label
-from dpp.data_quality.harmonization.normalizers import normalize_enum_value
+from dpp.data_quality.harmonization.normalizers import (
+    normalize_enum_value,
+    normalize_unit_label,
+    normalize_value_to_unit,
+    resolve_enum_value,
+)
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.services import harmonize_document
 from dpp.data_quality.harmonization.free_text import normalize_text_value
@@ -30,12 +35,12 @@ def _node_by_id(document: dict, entity_id: str) -> dict:
 
 
 class VocabularyAliasTests(unittest.TestCase):
-    def test_minimal_llm_product_field_aliases_map_to_canonical_paths(self) -> None:
+    def test_llm_generated_product_field_aliases_map_to_canonical_paths(self) -> None:
         expected_paths = {
             ("product name", "DPPStatic"): "DPPStatic.name",
-            ("product type", "DPPStatic"): "DPPStatic.productClass",
+            ("product category", "DPPStatic"): "DPPStatic.productClass",
             ("modular part", "PartInstance"): "PartInstance.isModular",
-            ("failure state", "PartInstance"): "PartInstance.hasFailstate",
+            ("fail state", "PartInstance"): "PartInstance.hasFailstate",
         }
 
         for (label, entity_type), expected_path in expected_paths.items():
@@ -44,13 +49,13 @@ class VocabularyAliasTests(unittest.TestCase):
                 self.assertIsNotNone(candidate)
                 self.assertEqual(expected_path, candidate.canonical_path)
 
-    def test_minimal_llm_emission_field_aliases_map_to_canonical_paths(self) -> None:
+    def test_llm_generated_emission_field_aliases_map_to_canonical_paths(self) -> None:
         expected_paths = {
-            ("type of activity", "ActivityData"): "ActivityData.activity_type",
+            ("activity type", "ActivityData"): "ActivityData.activity_type",
             ("ghg scope", "GHGEmissionRecord"): "GHGEmissionRecord.scope",
             ("scope3 category", "GHGEmissionRecord"): "GHGEmissionRecord.scope3_category",
             ("calculation method", "GHGEmissionRecord"): "GHGEmissionRecord.calculation_method",
-            ("data provenance", "GHGEmissionRecord"): "GHGEmissionRecord.provenance",
+            ("data source", "GHGEmissionRecord"): "GHGEmissionRecord.provenance",
         }
 
         for (label, entity_type), expected_path in expected_paths.items():
@@ -59,11 +64,11 @@ class VocabularyAliasTests(unittest.TestCase):
                 self.assertIsNotNone(candidate)
                 self.assertEqual(expected_path, candidate.canonical_path)
 
-    def test_minimal_llm_emission_enum_aliases_normalize_to_canonical_values(self) -> None:
+    def test_llm_generated_emission_enum_aliases_normalize_to_canonical_values(self) -> None:
         expected_values = {
             ("ActivityData.activity_type", "travel distance"): "distance_traveled",
-            ("ActivityData.activity_type", "fuel used"): "fuel_consumption",
-            ("GHGEmissionRecord.scope", "scope1"): "scope_1",
+            ("ActivityData.activity_type", "fuel use"): "fuel_consumption",
+            ("GHGEmissionRecord.scope", "scope 1"): "scope_1",
             ("GHGEmissionRecord.scope3_category", "work travel"): "business_travel",
             ("GHGEmissionRecord.scope3_category", "sold product use"): "use_of_sold_products",
         }
@@ -74,6 +79,22 @@ class VocabularyAliasTests(unittest.TestCase):
                     expected_value,
                     normalize_enum_value(canonical_path, value),
                 )
+
+    def test_enum_value_uses_the_vocabulary_selected_by_the_mapped_label(self) -> None:
+        scope_candidate = resolve_enum_value(
+            "GHGEmissionRecord.scope",
+            "scope 1",
+            enable_semantic=False,
+        )
+        scope3_candidate = resolve_enum_value(
+            "GHGEmissionRecord.scope3_category",
+            "scope 1",
+            enable_semantic=False,
+        )
+
+        self.assertIsNotNone(scope_candidate)
+        self.assertEqual("scope_1", scope_candidate.canonical_value)
+        self.assertIsNone(scope3_candidate)
 
 
 class ServiceSurfaceFormTests(unittest.TestCase):
@@ -154,6 +175,146 @@ class FeedbackProposalTests(unittest.TestCase):
         self.assertEqual("approved", approved.status)
         self.assertEqual("pump_fault", approved.as_dict()["concept_id"])
         self.assertEqual("pump sounds dead", approved.as_dict()["proposed_surface_form"])
+
+
+class FieldAwareWarningTests(unittest.TestCase):
+    def test_unmapped_label_warns_without_guessing_unit_context(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "dpp-static-unmapped-001",
+                    "@type": "dpp:DPPStatic",
+                    "mysteryMeasurement": {"value": 10, "unit": "kg"},
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "product")
+        entity = result.entities["dpp-static-unmapped-001"]
+
+        self.assertEqual("mysteryMeasurement", entity.unmapped_fields[0].label)
+        self.assertTrue(
+            any("could not be mapped to a supported field" in issue.message for issue in entity.issues)
+        )
+        self.assertTrue(
+            any("Available fields for 'DPPStatic'" in issue.message for issue in entity.issues)
+        )
+        self.assertFalse(any("accepted source units" in issue.message for issue in entity.issues))
+
+    def test_mapped_label_unit_error_reports_expected_field_units(self) -> None:
+        document = _load_example("unit_unsupported_input.json")
+        result = harmonize_document(document, "product")
+        entity = result.entities["dpp-static-unit-unsupported-001"]
+
+        issue_messages = [issue.message for issue in entity.issues]
+        self.assertTrue(
+            any(
+                "DPPStatic.weightGRM" in message
+                and "accepted source units: GRM, kg, mg" in message
+                for message in issue_messages
+            )
+        )
+
+    def test_mapped_enum_error_reports_expected_canonical_values(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "record-invalid-enum-001",
+                    "@type": "dpp:GHGEmissionRecord",
+                    "dpp:scope": 4,
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "emission")
+        entity = result.entities["record-invalid-enum-001"]
+
+        self.assertTrue(
+            any(
+                "Expected values for 'GHGEmissionRecord.scope': scope_1, scope_2, scope_3"
+                in issue.message
+                for issue in entity.issues
+            )
+        )
+
+
+class UnitAliasTests(unittest.TestCase):
+    def test_standard_oriented_unit_aliases_normalize_to_canonical_units(self) -> None:
+        expected_units = {
+            "kilowatt hour": "kWh",
+            "kilowatt-hour": "kWh",
+            "centimetre": "CM",
+            "kg CO2 equivalent": "kgCO2e",
+            "kg CO2 equivalent per kilometre": "kgCO2e/km",
+        }
+
+        for dirty_unit, expected_unit in expected_units.items():
+            with self.subTest(dirty_unit=dirty_unit):
+                self.assertEqual(expected_unit, normalize_unit_label(dirty_unit))
+
+    def test_source_only_units_do_not_become_general_canonical_outputs(self) -> None:
+        self.assertEqual("minutes", normalize_unit_label("minutes"))
+
+        normalized = normalize_value_to_unit(90, source_unit="minutes", target_unit="HRS")
+        self.assertEqual(1.5, normalized.value)
+        self.assertEqual("HRS", normalized.unit)
+
+    def test_activity_unit_piece_value_is_accepted_as_legacy_unit_code(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "activity-unit-001",
+                    "@type": "dpp:ActivityData",
+                    "dpp:activityUnit": "unit",
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "emission")
+        entity = result.entities["activity-unit-001"]
+
+        self.assertEqual("unit", entity.fields["ActivityData.unit"].normalized_value)
+        self.assertFalse(entity.issues)
+
+    def test_emission_unit_fields_reject_units_outside_their_legacy_context(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "activity-minutes-001",
+                    "@type": "dpp:ActivityData",
+                    "dpp:activityUnit": "minutes",
+                },
+                {
+                    "@id": "factor-per-unit-001",
+                    "@type": "dpp:EmissionFactor",
+                    "dpp:factorUnit": "kg CO2 equivalent per unit",
+                },
+            ],
+        }
+
+        result = harmonize_document(document, "emission")
+
+        activity_issues = [issue.message for issue in result.entities["activity-minutes-001"].issues]
+        factor_issues = [issue.message for issue in result.entities["factor-per-unit-001"].issues]
+
+        self.assertTrue(
+            any(
+                "Expected unit values for 'ActivityData.unit': kWh, kg, km, ltr, m, m3, t, unit"
+                in message
+                for message in activity_issues
+            )
+        )
+        self.assertTrue(
+            any(
+                "Expected unit values for 'EmissionFactor.unit': kgCO2e/kWh, kgCO2e/kg, kgCO2e/km"
+                in message
+                for message in factor_issues
+            )
+        )
 
 
 class CleanJsonLdOutputTests(unittest.TestCase):
@@ -272,6 +433,51 @@ class CleanJsonLdOutputTests(unittest.TestCase):
                 "ReplaceServiceStep.costEur"
             ].original_value,
         )
+
+    def test_dirty_context_field_labels_map_to_canonical_service_fields(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "service-context-001",
+                    "@type": "dpp:RepairServiceStep",
+                    "diagnose": "pump dead",
+                    "repairCost": 79.0,
+                    "partRepaired": "part-pump-001",
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        entity = result.entities["service-context-001"]
+
+        self.assertEqual(
+            79.0,
+            entity.fields["RepairServiceStep.costEur"].normalized_value,
+        )
+        self.assertEqual(
+            "part-pump-001",
+            entity.fields["RepairServiceStep.repairedPartId"].normalized_value,
+        )
+        self.assertEqual("mapped", entity.fields["RepairServiceStep.costEur"].status)
+        self.assertEqual(
+            "mapped",
+            entity.fields["RepairServiceStep.repairedPartId"].status,
+        )
+
+        output = build_clean_jsonld(result, document=document)
+        service = _node_by_id(output, "service-context-001")
+        self.assertEqual(
+            {
+                "@type": "schema:PriceSpecification",
+                "schema:price": 79.0,
+                "schema:priceCurrency": "EUR",
+            },
+            service["priceSpecification"],
+        )
+        self.assertEqual("part-pump-001", service["dpp:repairedPartId"])
+        self.assertNotIn("repairCost", service)
+        self.assertNotIn("partRepaired", service)
 
     def test_refurbishment_replacement_pairs_roundtrip_as_legacy_nested_parts(self) -> None:
         document = {

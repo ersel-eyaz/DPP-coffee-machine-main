@@ -6,18 +6,18 @@
     {
       "@id": "record-001",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:totalCarbon": {
+      "dpp:reportedEmissions": {
         "value": 1250,
         "unit": "kgCO2e"
       },
       "dpp:activity": {
         "@type": "dpp:ActivityData",
-        "dpp:measuredAmount": 85000,
+        "dpp:activityQuantity": 85000,
         "dpp:activityUnit": "meters"
       },
       "dpp:emissionFactor": {
         "@type": "dpp:EmissionFactor",
-        "dpp:co2Factor": 0.147,
+        "dpp:factorValue": 0.147,
         "dpp:factorUnit": "kg CO2 equivalent per kilometer"
       }
     }

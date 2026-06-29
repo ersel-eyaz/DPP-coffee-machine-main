@@ -27,19 +27,19 @@
     {
       "@id": "part-static-top-001",
       "@type": "dpp:PartStatic",
-      "dpp:componentWeight": {
+      "dpp:partWeight": {
         "value": 2400,
         "unit": "g"
       },
-      "dpp:componentHeight": {
+      "dpp:partHeight": {
         "value": 44,
         "unit": "cm"
       },
-      "dpp:componentWidth": {
+      "dpp:partWidth": {
         "value": 27,
         "unit": "cm"
       },
-      "dpp:componentDepth": {
+      "dpp:partDepth": {
         "value": 35,
         "unit": "cm"
       }
@@ -58,7 +58,7 @@
             "value": 1.2,
             "unit": "kg"
           },
-          "dpp:recycledShare": {
+          "dpp:percentRecycled": {
             "value": 30,
             "unit": "percent"
           },
@@ -72,14 +72,14 @@
     {
       "@id": "dpp-instance-001",
       "@type": "dpp:DPPInstance",
-      "dpp:runtime": {
+      "dpp:operatingHours": {
         "value": 120,
         "unit": "hours"
       },
-      "dpp:brewCycles": 300,
+      "dpp:brewingCycles": 300,
       "dpp:cleaningCycles": 12,
       "dpp:descalingCycles": 3,
-      "dpp:grinderCycles": 295,
+      "dpp:grindCycles": 295,
       "schema:isVariantOf": {
         "@id": "dpp-static-001"
       },

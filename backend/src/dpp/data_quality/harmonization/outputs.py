@@ -17,6 +17,7 @@ from typing import Any
 
 from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
+from dpp.data_quality.harmonization.unit_registry import unit_binding_for_field
 
 
 DEFAULT_JSONLD_CONTEXT = {
@@ -114,25 +115,12 @@ _RELATION_JSONLD_TERMS: dict[tuple[str, str], str] = {
     ("RemanufacturingServiceStep", "replacedAndNewParts"): "dpp:replacedAndNewParts",
 }
 
-_MEASUREMENT_JSONLD_TERMS: dict[str, tuple[str, str]] = {
-    "DPPStatic.weightGRM": ("weight", "GRM"),
-    "DPPStatic.heightCM": ("height", "CM"),
-    "DPPStatic.widthCM": ("width", "CM"),
-    "DPPStatic.depthCM": ("depth", "CM"),
-    "PartStatic.weightGRM": ("weight", "GRM"),
-    "PartStatic.heightCM": ("height", "CM"),
-    "PartStatic.widthCM": ("width", "CM"),
-    "PartStatic.depthCM": ("depth", "CM"),
-    "MaterialInstance.weightGRM": ("weight", "GRM"),
-}
-
-_PROPERTY_VALUE_JSONLD_FIELDS: dict[str, tuple[str, str, str | None]] = {
-    "MaterialInstance.percentRecycled": ("additionalProperty", "percentRecycled", None),
-    "DPPInstance.cleaningCount": ("schema:additionalProperty", "cleaningCount", None),
-    "DPPInstance.chalkCount": ("schema:additionalProperty", "chalkCount", None),
-    "DPPInstance.brewingCount": ("schema:additionalProperty", "brewingCount", None),
-    "DPPInstance.coffeeGrindingCount": ("schema:additionalProperty", "coffeeGrindingCount", None),
-    "DPPInstance.operatingHRS": ("schema:additionalProperty", "operatingHRS", "HRS"),
+_PROPERTY_VALUE_JSONLD_FIELDS: dict[str, tuple[str, str]] = {
+    "MaterialInstance.percentRecycled": ("additionalProperty", "percentRecycled"),
+    "DPPInstance.cleaningCount": ("schema:additionalProperty", "cleaningCount"),
+    "DPPInstance.chalkCount": ("schema:additionalProperty", "chalkCount"),
+    "DPPInstance.brewingCount": ("schema:additionalProperty", "brewingCount"),
+    "DPPInstance.coffeeGrindingCount": ("schema:additionalProperty", "coffeeGrindingCount"),
 }
 
 _PRICE_SPECIFICATION_JSONLD_FIELDS = {
@@ -182,16 +170,15 @@ def _jsonld_field_term(canonical_path: str) -> str:
 def _jsonld_field_value(canonical_path: str, harmonized_field: Any) -> Any:
     """Serialize measurement values like the legacy JSON-LD exporter where applicable."""
     value = effective_field_value(harmonized_field)
-    measurement = _MEASUREMENT_JSONLD_TERMS.get(canonical_path)
-    if measurement is None:
+    unit_binding = unit_binding_for_field(canonical_path)
+    if unit_binding is None or unit_binding.jsonld_quantity_name is None:
         return value
 
-    name, unit_code = measurement
     return {
         "@type": "schema:QuantitativeValue",
-        "name": name,
+        "name": unit_binding.jsonld_quantity_name,
         "value": value,
-        "unitCode": unit_code,
+        "unitCode": unit_binding.target_unit,
     }
 
 
@@ -201,16 +188,25 @@ def _add_legacy_structured_field(
     harmonized_field: Any,
 ) -> bool:
     """Serialize legacy exporter containers instead of inventing direct DPP properties."""
+    unit_binding = unit_binding_for_field(canonical_path)
+    if unit_binding is not None and unit_binding.property_value_term is not None:
+        entry: dict[str, Any] = {
+            "@type": "schema:PropertyValue",
+            "name": unit_binding.property_value_name or _field_name_from_path(canonical_path),
+            "value": effective_field_value(harmonized_field),
+            "unitCode": unit_binding.target_unit,
+        }
+        node.setdefault(unit_binding.property_value_term, []).append(entry)
+        return True
+
     property_value = _PROPERTY_VALUE_JSONLD_FIELDS.get(canonical_path)
     if property_value is not None:
-        output_term, name, unit_code = property_value
+        output_term, name = property_value
         entry: dict[str, Any] = {
             "@type": "schema:PropertyValue",
             "name": name,
             "value": effective_field_value(harmonized_field),
         }
-        if unit_code is not None:
-            entry["unitCode"] = unit_code
         node.setdefault(output_term, []).append(entry)
         return True
 

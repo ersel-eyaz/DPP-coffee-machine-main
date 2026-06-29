@@ -6,7 +6,7 @@
     {
       "@id": "record-enum-fuzzy-001",
       "@type": "dpp:GHGEmissionRecord",
-      "dpp:totalCarbon": {
+      "dpp:reportedEmissions": {
         "value": 52.5,
         "unit": "kgCO2e"
       },
@@ -14,13 +14,13 @@
       "dpp:scope3Category": "purchased good and services",
       "dpp:activity": {
         "@type": "dpp:ActivityData",
-        "dpp:measuredAmount": 125,
+        "dpp:activityQuantity": 125,
         "dpp:activityUnit": "kWh",
         "dpp:activityType": "electricty consumption"
       },
       "dpp:emissionFactor": {
         "@type": "dpp:EmissionFactor",
-        "dpp:co2Factor": 0.42,
+        "dpp:factorValue": 0.42,
         "dpp:factorUnit": "kgCO2e/kWh"
       }
     }

@@ -8,6 +8,10 @@ normalizers.py and services.py.
 Entity types are assumed to be reliable at this stage. Field-label
 harmonization is therefore restricted to the declared entity type whenever an
 entity type is available.
+
+Dirty-input aliases are loaded from a generated registry that was produced by
+the documented LLM API field-label alias workflow. Trusted clean JSON-LD
+roundtrip terms are handled separately and deterministically.
 """
 
 from __future__ import annotations
@@ -17,6 +21,8 @@ from difflib import SequenceMatcher
 
 from dpp.data_quality.scopes import SUPPORTED_SCOPES
 from dpp.data_quality.scopes.schemas import CanonicalField, ScopeDefinition
+from dpp.data_quality.harmonization.field_label_aliases import ENTITY_LABEL_MAPPINGS
+from dpp.data_quality.harmonization.unit_registry import unit_binding_for_field
 
 
 class MappingError(ValueError):
@@ -79,201 +85,8 @@ def _normalize_label(label: str) -> str:
 # Entity-aware field-label aliases
 # ---------------------------------------------------------------------------
 
-_ENTITY_LABEL_MAPPINGS: dict[tuple[str, str], dict[str, str]] = {
-    # Product scope: product-level static fields.
-    ("product", "DPPStatic"): {
-        "name": "DPPStatic.name",
-        "productname": "DPPStatic.name",
-        "dppname": "DPPStatic.name",
-        "category": "DPPStatic.productClass",
-        "productclass": "DPPStatic.productClass",
-        "producttype": "DPPStatic.productClass",
-        "class": "DPPStatic.productClass",
-        "weight": "DPPStatic.weightGRM",
-        "height": "DPPStatic.heightCM",
-        "width": "DPPStatic.widthCM",
-        "depth": "DPPStatic.depthCM",
-        "productweight": "DPPStatic.weightGRM",
-        "productmass": "DPPStatic.weightGRM",
-        "totalproductweight": "DPPStatic.weightGRM",
-        "totalweight": "DPPStatic.weightGRM",
-        "deviceweight": "DPPStatic.weightGRM",
-        "applianceweight": "DPPStatic.weightGRM",
-        "productheight": "DPPStatic.heightCM",
-        "deviceheight": "DPPStatic.heightCM",
-        "applianceheight": "DPPStatic.heightCM",
-        "productwidth": "DPPStatic.widthCM",
-        "devicewidth": "DPPStatic.widthCM",
-        "appliancewidth": "DPPStatic.widthCM",
-        "productdepth": "DPPStatic.depthCM",
-        "devicedepth": "DPPStatic.depthCM",
-        "appliancedepth": "DPPStatic.depthCM",
-    },
-    # Product scope: part-level static fields.
-    ("product", "PartStatic"): {
-        "weight": "PartStatic.weightGRM",
-        "height": "PartStatic.heightCM",
-        "width": "PartStatic.widthCM",
-        "depth": "PartStatic.depthCM",
-        "partweight": "PartStatic.weightGRM",
-        "partmass": "PartStatic.weightGRM",
-        "componentweight": "PartStatic.weightGRM",
-        "componentmass": "PartStatic.weightGRM",
-        "partheight": "PartStatic.heightCM",
-        "componentheight": "PartStatic.heightCM",
-        "partwidth": "PartStatic.widthCM",
-        "componentwidth": "PartStatic.widthCM",
-        "partdepth": "PartStatic.depthCM",
-        "componentdepth": "PartStatic.depthCM",
-    },
-    # Product scope: part-instance flags.
-    ("product", "PartInstance"): {
-        "ismodular": "PartInstance.isModular",
-        "modular": "PartInstance.isModular",
-        "modularpart": "PartInstance.isModular",
-        "hasfailstate": "PartInstance.hasFailstate",
-        "failstate": "PartInstance.hasFailstate",
-        "failurestate": "PartInstance.hasFailstate",
-        "hasfailurestate": "PartInstance.hasFailstate",
-    },
-    # Product scope: material instance fields.
-    ("product", "MaterialInstance"): {
-        "weight": "MaterialInstance.weightGRM",
-        "materialweight": "MaterialInstance.weightGRM",
-        "materialmass": "MaterialInstance.weightGRM",
-        "rawmaterialweight": "MaterialInstance.weightGRM",
-        "rawmaterialmass": "MaterialInstance.weightGRM",
-        "recycledcontent": "MaterialInstance.percentRecycled",
-        "recycledshare": "MaterialInstance.percentRecycled",
-        "percentrecycled": "MaterialInstance.percentRecycled",
-        "recyclingpercentage": "MaterialInstance.percentRecycled",
-        "recycledpercentage": "MaterialInstance.percentRecycled",
-        "purity": "MaterialInstance.purityLevel",
-        "materialpurity": "MaterialInstance.purityLevel",
-        "puritylevel": "MaterialInstance.purityLevel",
-    },
-    # Product scope: product-instance usage counters.
-    ("product", "DPPInstance"): {
-        "runtime": "DPPInstance.operatingHRS",
-        "operatinghours": "DPPInstance.operatingHRS",
-        "usagehours": "DPPInstance.operatingHRS",
-        "operatinghrs": "DPPInstance.operatingHRS",
-        "operationhours": "DPPInstance.operatingHRS",
-        "brewcycles": "DPPInstance.brewingCount",
-        "brewingcycles": "DPPInstance.brewingCount",
-        "cupsmade": "DPPInstance.brewingCount",
-        "brewingcount": "DPPInstance.brewingCount",
-        "coffeeproduced": "DPPInstance.brewingCount",
-        "cleaningcycles": "DPPInstance.cleaningCount",
-        "cleaningcount": "DPPInstance.cleaningCount",
-        "cleanings": "DPPInstance.cleaningCount",
-        "descalingcycles": "DPPInstance.chalkCount",
-        "descalingcount": "DPPInstance.chalkCount",
-        "chalkcount": "DPPInstance.chalkCount",
-        "decalcificationcycles": "DPPInstance.chalkCount",
-        "grindercycles": "DPPInstance.coffeeGrindingCount",
-        "grindingcycles": "DPPInstance.coffeeGrindingCount",
-        "grindingcount": "DPPInstance.coffeeGrindingCount",
-        "coffeegrindingcount": "DPPInstance.coffeeGrindingCount",
-    },
-    # Service scope: free-text fields shared by secondary value steps.
-    ("service", "SecondaryValueStep"): {
-        "observedsymptoms": "SecondaryValueStep.observedSymptoms",
-        "symptoms": "SecondaryValueStep.observedSymptoms",
-        "reportedissues": "SecondaryValueStep.observedSymptoms",
-        "diagnose": "SecondaryValueStep.diagnose",
-        "diagnosis": "SecondaryValueStep.diagnose",
-        "servicediagnosis": "SecondaryValueStep.diagnose",
-    },
-    ("service", "RepairServiceStep"): {
-        "observedsymptoms": "RepairServiceStep.observedSymptoms",
-        "symptoms": "RepairServiceStep.observedSymptoms",
-        "reportedissues": "RepairServiceStep.observedSymptoms",
-        "diagnose": "RepairServiceStep.diagnose",
-        "diagnosis": "RepairServiceStep.diagnose",
-        "servicediagnosis": "RepairServiceStep.diagnose",
-    },
-    ("service", "ReplaceServiceStep"): {
-        "observedsymptoms": "ReplaceServiceStep.observedSymptoms",
-        "symptoms": "ReplaceServiceStep.observedSymptoms",
-        "reportedissues": "ReplaceServiceStep.observedSymptoms",
-        "diagnose": "ReplaceServiceStep.diagnose",
-        "diagnosis": "ReplaceServiceStep.diagnose",
-        "servicediagnosis": "ReplaceServiceStep.diagnose",
-    },
-    ("service", "CleaningServiceStep"): {
-        "observedsymptoms": "CleaningServiceStep.observedSymptoms",
-        "symptoms": "CleaningServiceStep.observedSymptoms",
-        "reportedissues": "CleaningServiceStep.observedSymptoms",
-        "diagnose": "CleaningServiceStep.diagnose",
-        "diagnosis": "CleaningServiceStep.diagnose",
-        "servicediagnosis": "CleaningServiceStep.diagnose",
-    },
-    ("service", "RefurbishmentServiceStep"): {
-        "observedsymptoms": "RefurbishmentServiceStep.observedSymptoms",
-        "symptoms": "RefurbishmentServiceStep.observedSymptoms",
-        "reportedissues": "RefurbishmentServiceStep.observedSymptoms",
-        "diagnose": "RefurbishmentServiceStep.diagnose",
-        "diagnosis": "RefurbishmentServiceStep.diagnose",
-        "servicediagnosis": "RefurbishmentServiceStep.diagnose",
-    },
-    ("service", "RemanufacturingServiceStep"): {
-        "observedsymptoms": "RemanufacturingServiceStep.observedSymptoms",
-        "symptoms": "RemanufacturingServiceStep.observedSymptoms",
-        "reportedissues": "RemanufacturingServiceStep.observedSymptoms",
-        "diagnose": "RemanufacturingServiceStep.diagnose",
-        "diagnosis": "RemanufacturingServiceStep.diagnose",
-        "servicediagnosis": "RemanufacturingServiceStep.diagnose",
-    },
-
-    # Emission scope: activity data fields.
-    ("emission", "ActivityData"): {
-        "activitytype": "ActivityData.activity_type",
-        "typeofactivity": "ActivityData.activity_type",
-        "measuredamount": "ActivityData.quantity",
-        "activityquantity": "ActivityData.quantity",
-        "quantity": "ActivityData.quantity",
-        "amount": "ActivityData.quantity",
-        "consumptionamount": "ActivityData.quantity",
-        "unit": "ActivityData.unit",
-        "activityunit": "ActivityData.unit",
-        "activitydataunit": "ActivityData.unit",
-        "quantityunit": "ActivityData.unit",
-        "measuredamountunit": "ActivityData.unit",
-        "hasunit": "ActivityData.unit",
-    },
-    # Emission scope: emission factor fields.
-    ("emission", "EmissionFactor"): {
-        "co2factor": "EmissionFactor.value",
-        "carbonfactor": "EmissionFactor.value",
-        "emissionfactor": "EmissionFactor.value",
-        "factorvalue": "EmissionFactor.value",
-        "unit": "EmissionFactor.unit",
-        "factorunit": "EmissionFactor.unit",
-        "emissionfactorunit": "EmissionFactor.unit",
-        "co2factorunit": "EmissionFactor.unit",
-        "carbonfactorunit": "EmissionFactor.unit",
-        "hasunit": "EmissionFactor.unit",
-    },
-    # Emission scope: GHG emission record fields.
-    ("emission", "GHGEmissionRecord"): {
-        "totalcarbon": "GHGEmissionRecord.emissions_kg_co2e",
-        "totalemissions": "GHGEmissionRecord.emissions_kg_co2e",
-        "emissions": "GHGEmissionRecord.emissions_kg_co2e",
-        "emissionskgco2e": "GHGEmissionRecord.emissions_kg_co2e",
-        "carbonfootprint": "GHGEmissionRecord.emissions_kg_co2e",
-        "scope": "GHGEmissionRecord.scope",
-        "ghgscope": "GHGEmissionRecord.scope",
-        "emissionscope": "GHGEmissionRecord.scope",
-        "scope3category": "GHGEmissionRecord.scope3_category",
-        "calculationmethod": "GHGEmissionRecord.calculation_method",
-        "method": "GHGEmissionRecord.calculation_method",
-        "provenance": "GHGEmissionRecord.provenance",
-        "source": "GHGEmissionRecord.provenance",
-        "dataprovenance": "GHGEmissionRecord.provenance",
-    },
-}
-
+# Generated from the documented LLM API field-label alias workflow.
+_ENTITY_LABEL_MAPPINGS = ENTITY_LABEL_MAPPINGS
 
 def _canonical_fields_by_path(scope: ScopeDefinition) -> dict[str, CanonicalField]:
     """Return scope fields keyed by canonical path."""
@@ -354,6 +167,36 @@ def _find_exact_canonical_field_match(
     return None
 
 
+def _find_trusted_jsonld_field_match(
+    normalized_label: str,
+    canonical_fields: dict[str, CanonicalField],
+    entity_type: str | None,
+) -> str | None:
+    """
+    Resolve field labels that come from the module's own clean JSON-LD output.
+
+    These are not dirty-input aliases. They are trusted serializer terms such as
+    schema:weight -> weight for DPPStatic.weightGRM, derived from field unit
+    bindings so clean output can be harmonized again without relying on the
+    LLM-generated alias registry.
+    """
+
+    matches: set[str] = set()
+
+    for canonical_path, _canonical_field in _fields_for_entity(canonical_fields, entity_type):
+        binding = unit_binding_for_field(canonical_path)
+        if binding is None or binding.jsonld_quantity_name is None:
+            continue
+
+        if normalized_label == _normalize_label(binding.jsonld_quantity_name):
+            matches.add(canonical_path)
+
+    if len(matches) == 1:
+        return next(iter(matches))
+
+    return None
+
+
 def _candidate_alias_mappings(scope_name: str, entity_type: str | None) -> dict[str, str]:
     """Return entity-specific aliases for the current trusted entity context."""
 
@@ -393,6 +236,13 @@ def map_field_label(label: str, scope_name: str, entity_type: str | None = None)
 
     if canonical_path is None:
         canonical_path = _find_exact_canonical_field_match(
+            normalized_label=normalized_label,
+            canonical_fields=canonical_fields,
+            entity_type=entity_type,
+        )
+
+    if canonical_path is None:
+        canonical_path = _find_trusted_jsonld_field_match(
             normalized_label=normalized_label,
             canonical_fields=canonical_fields,
             entity_type=entity_type,
