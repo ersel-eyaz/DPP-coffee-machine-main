@@ -94,10 +94,17 @@ _FIELD_JSONLD_TERMS: dict[str, str] = {
     "RemanufacturingServiceStep.observedSymptoms": "dpp:observedSymptoms",
     "SecondaryValueStep.costEur": "priceSpecification[schema:price]",
     "RepairServiceStep.costEur": "priceSpecification[schema:price]",
+    "RepairServiceStep.repairedPartId": "dpp:repairedPartId",
     "ReplaceServiceStep.costEur": "priceSpecification[schema:price]",
+    "ReplaceServiceStep.replacedPartId": "dpp:replacedPartId",
     "CleaningServiceStep.costEur": "priceSpecification[schema:price]",
+    "CleaningServiceStep.cleanedPartId": "dpp:cleanedPartId",
     "RefurbishmentServiceStep.costEur": "priceSpecification[schema:price]",
+    "RefurbishmentServiceStep.repairedPartIds": "dpp:repairedPartIds",
+    "RefurbishmentServiceStep.cleanedPartIds": "dpp:cleanedPartIds",
     "RemanufacturingServiceStep.costEur": "priceSpecification[schema:price]",
+    "RemanufacturingServiceStep.repairedPartIds": "dpp:repairedPartIds",
+    "RemanufacturingServiceStep.cleanedPartIds": "dpp:cleanedPartIds",
 }
 
 _RELATION_JSONLD_TERMS: dict[tuple[str, str], str] = {

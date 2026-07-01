@@ -6,6 +6,8 @@ import json
 import unittest
 from pathlib import Path
 
+from dpp.data_quality.anomaly.outputs import build_anomaly_report
+from dpp.data_quality.anomaly.services import analyze_harmonization_result
 from dpp.data_quality.harmonization.mapper import map_field_label
 from dpp.data_quality.harmonization.normalizers import (
     normalize_enum_value,
@@ -478,6 +480,43 @@ class CleanJsonLdOutputTests(unittest.TestCase):
         self.assertEqual("part-pump-001", service["dpp:repairedPartId"])
         self.assertNotIn("repairCost", service)
         self.assertNotIn("partRepaired", service)
+
+        report = build_harmonization_report(result)
+        field_report = report["entities"]["service-context-001"]["fields"]
+        self.assertEqual(
+            "dpp:repairedPartId",
+            field_report["RepairServiceStep.repairedPartId"]["jsonld_term"],
+        )
+
+    def test_service_quality_output_contains_reviewable_harmonization_and_anomaly_context(self) -> None:
+        document = _load_example("service_anomaly_input.json")
+        result = harmonize_document(document, "service")
+        clean_data = build_clean_jsonld(result, document=document)
+        harmonization_report = build_harmonization_report(result)
+        anomaly_report = build_anomaly_report(analyze_harmonization_result(result))
+
+        cleaning = _node_by_id(clean_data, "service-anomaly-cleaning-001")
+        self.assertEqual("switch_or_button_fault", cleaning["dpp:diagnose"])
+        self.assertEqual("part-ui-pcb-001", cleaning["dpp:cleanedPartId"])
+        self.assertEqual(
+            {
+                "@type": "schema:PriceSpecification",
+                "schema:price": 450.0,
+                "schema:priceCurrency": "EUR",
+            },
+            cleaning["priceSpecification"],
+        )
+
+        text_entry = harmonization_report["entities"]["service-anomaly-repair-001"]["text_harmonization"]["diagnose"]
+        self.assertEqual("unresolved", text_entry["status"])
+
+        review_actions = {
+            finding["review_action"]
+            for finding in anomaly_report["findings"]
+            if "review_action" in finding
+        }
+        self.assertIn("confirm_or_correct_service_concept", review_actions)
+        self.assertIn("verify_service_step_type_or_concept", review_actions)
 
     def test_refurbishment_replacement_pairs_roundtrip_as_legacy_nested_parts(self) -> None:
         document = {
