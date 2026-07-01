@@ -487,6 +487,10 @@ class CleanJsonLdOutputTests(unittest.TestCase):
             "dpp:repairedPartId",
             field_report["RepairServiceStep.repairedPartId"]["jsonld_term"],
         )
+        self.assertEqual(
+            0.92,
+            field_report["RepairServiceStep.repairedPartId"]["field_thresholds"]["automatic_fuzzy_threshold"],
+        )
 
     def test_service_quality_output_contains_reviewable_harmonization_and_anomaly_context(self) -> None:
         document = _load_example("service_anomaly_input.json")
@@ -509,6 +513,7 @@ class CleanJsonLdOutputTests(unittest.TestCase):
 
         text_entry = harmonization_report["entities"]["service-anomaly-repair-001"]["text_harmonization"]["diagnose"]
         self.assertEqual("unresolved", text_entry["status"])
+        self.assertEqual(0.58, text_entry["thresholds"]["automatic_semantic_threshold"])
 
         review_actions = {
             finding["review_action"]

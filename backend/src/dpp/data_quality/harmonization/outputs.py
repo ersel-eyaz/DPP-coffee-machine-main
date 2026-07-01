@@ -15,9 +15,30 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from dpp.data_quality.harmonization.free_text import (
+    AMBIGUOUS_TEXT_FUZZY_THRESHOLD,
+    AMBIGUOUS_TEXT_SEMANTIC_THRESHOLD,
+    AUTO_TEXT_FUZZY_THRESHOLD,
+    AUTO_TEXT_SEMANTIC_THRESHOLD,
+    MIN_TEXT_SEMANTIC_MARGIN,
+)
+from dpp.data_quality.harmonization.mapper import (
+    AMBIGUOUS_FUZZY_THRESHOLD as AMBIGUOUS_FIELD_FUZZY_THRESHOLD,
+    AUTO_FUZZY_THRESHOLD as AUTO_FIELD_FUZZY_THRESHOLD,
+)
+from dpp.data_quality.harmonization.normalizers import (
+    AMBIGUOUS_ENUM_FUZZY_THRESHOLD,
+    AMBIGUOUS_ENUM_SEMANTIC_THRESHOLD,
+    AMBIGUOUS_UNIT_FUZZY_THRESHOLD,
+    AUTO_ENUM_FUZZY_THRESHOLD,
+    AUTO_ENUM_SEMANTIC_THRESHOLD,
+    AUTO_UNIT_FUZZY_THRESHOLD,
+    MIN_ENUM_SEMANTIC_MARGIN,
+)
 from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
 from dpp.data_quality.harmonization.unit_registry import unit_binding_for_field
+from dpp.data_quality.scopes import SUPPORTED_SCOPES
 
 
 DEFAULT_JSONLD_CONTEXT = {
@@ -140,6 +161,37 @@ _PRICE_SPECIFICATION_JSONLD_FIELDS = {
 }
 
 
+FIELD_LABEL_THRESHOLDS = {
+    "automatic_fuzzy_threshold": AUTO_FIELD_FUZZY_THRESHOLD,
+    "candidate_reporting_threshold": AMBIGUOUS_FIELD_FUZZY_THRESHOLD,
+    "minimum_margin": 0.05,
+}
+
+UNIT_VALUE_THRESHOLDS = {
+    "automatic_fuzzy_threshold": AUTO_UNIT_FUZZY_THRESHOLD,
+    "candidate_reporting_threshold": AMBIGUOUS_UNIT_FUZZY_THRESHOLD,
+    "minimum_margin": 0.05,
+}
+
+ENUM_VALUE_THRESHOLDS = {
+    "automatic_fuzzy_threshold": AUTO_ENUM_FUZZY_THRESHOLD,
+    "candidate_fuzzy_reporting_threshold": AMBIGUOUS_ENUM_FUZZY_THRESHOLD,
+    "automatic_semantic_threshold": AUTO_ENUM_SEMANTIC_THRESHOLD,
+    "candidate_semantic_reporting_threshold": AMBIGUOUS_ENUM_SEMANTIC_THRESHOLD,
+    "minimum_fuzzy_margin": 0.05,
+    "minimum_semantic_margin": MIN_ENUM_SEMANTIC_MARGIN,
+}
+
+TEXT_VALUE_THRESHOLDS = {
+    "automatic_fuzzy_threshold": AUTO_TEXT_FUZZY_THRESHOLD,
+    "candidate_fuzzy_reporting_threshold": AMBIGUOUS_TEXT_FUZZY_THRESHOLD,
+    "automatic_semantic_threshold": AUTO_TEXT_SEMANTIC_THRESHOLD,
+    "candidate_semantic_reporting_threshold": AMBIGUOUS_TEXT_SEMANTIC_THRESHOLD,
+    "minimum_fuzzy_margin": 0.05,
+    "minimum_semantic_margin": MIN_TEXT_SEMANTIC_MARGIN,
+}
+
+
 def _context_from_document(document: dict[str, Any]) -> Any:
     """Return an output context that preserves input terms and defines canonical prefixes."""
     context = document.get("@context")
@@ -239,6 +291,61 @@ def _drop_none_values(value: Any) -> Any:
 
     if isinstance(value, list):
         return [_drop_none_values(item) for item in value]
+
+    return value
+
+
+def _field_role(scope_name: str, canonical_path: str) -> str | None:
+    """Return the configured scope role for one canonical field path."""
+    scope = SUPPORTED_SCOPES.get(scope_name)
+    if scope is None:
+        return None
+
+    for field in scope.fields:
+        if field.path == canonical_path:
+            return field.role
+
+    return None
+
+
+def _value_thresholds_for_field(scope_name: str, canonical_path: str) -> dict[str, Any] | None:
+    """Return value-level decision thresholds relevant for one canonical field."""
+    role = _field_role(scope_name, canonical_path)
+    if role == "controlled_vocabulary":
+        return dict(ENUM_VALUE_THRESHOLDS)
+
+    if role == "unit_harmonization" or unit_binding_for_field(canonical_path) is not None:
+        return dict(UNIT_VALUE_THRESHOLDS)
+
+    if role == "free_text_harmonization":
+        return dict(TEXT_VALUE_THRESHOLDS)
+
+    return None
+
+
+def _with_decision_thresholds(scope_name: str, canonical_path: str, field_dict: dict[str, Any]) -> dict[str, Any]:
+    """Attach structured threshold metadata used by the harmonization decision."""
+    enriched = dict(field_dict)
+
+    enriched["field_thresholds"] = dict(FIELD_LABEL_THRESHOLDS)
+
+    value_thresholds = _value_thresholds_for_field(scope_name, canonical_path)
+    if value_thresholds is not None:
+        enriched["value_thresholds"] = value_thresholds
+
+    return enriched
+
+
+def _with_text_thresholds(value: Any) -> Any:
+    """Attach free-text decision thresholds to service text-harmonization entries."""
+    if isinstance(value, dict):
+        if "status" in value and "original_value" in value:
+            return {**value, "thresholds": dict(TEXT_VALUE_THRESHOLDS)}
+
+        return {key: _with_text_thresholds(item) for key, item in value.items()}
+
+    if isinstance(value, list):
+        return [_with_text_thresholds(item) for item in value]
 
     return value
 
@@ -515,7 +622,11 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
             entity_dict["fields"] = {
                 canonical_path: _with_jsonld_term(
                     canonical_path,
-                    _format_service_field_for_report(canonical_path, field_dict),
+                    _with_decision_thresholds(
+                        result.scope_name,
+                        canonical_path,
+                        _format_service_field_for_report(canonical_path, field_dict),
+                    ),
                 )
                 for canonical_path, field_dict in entity_dict.get("fields", {}).items()
                 if not _is_normalized_free_text_path(canonical_path)
@@ -524,13 +635,19 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
             entity_dict["fields"] = {
                 canonical_path: _with_jsonld_term(
                     canonical_path,
-                    _format_measurement_field_for_report(field_dict),
+                    _with_decision_thresholds(
+                        result.scope_name,
+                        canonical_path,
+                        _format_measurement_field_for_report(field_dict),
+                    ),
                 )
                 for canonical_path, field_dict in entity_dict.get("fields", {}).items()
             }
 
         if not entity_dict.get("text_harmonization"):
             entity_dict.pop("text_harmonization", None)
+        else:
+            entity_dict["text_harmonization"] = _with_text_thresholds(entity_dict["text_harmonization"])
 
         report_entities[entity_id] = _drop_none_values(entity_dict)
 

@@ -63,6 +63,72 @@ function formatMethod(method, confidence) {
   return typeof confidence === "number" ? `${method} (${confidence.toFixed(2)})` : method;
 }
 
+function formatScore(value) {
+  return typeof value === "number" ? value.toFixed(2) : null;
+}
+
+function formatThresholds(thresholds) {
+  if (!thresholds) return "-";
+
+  const parts = [];
+  const fuzzyAuto = formatScore(thresholds.automatic_fuzzy_threshold);
+  const fuzzyCandidate = formatScore(
+    thresholds.candidate_reporting_threshold ?? thresholds.candidate_fuzzy_reporting_threshold,
+  );
+  const semanticAuto = formatScore(thresholds.automatic_semantic_threshold);
+  const semanticCandidate = formatScore(thresholds.candidate_semantic_reporting_threshold);
+  const margin = formatScore(thresholds.minimum_margin ?? thresholds.minimum_fuzzy_margin);
+  const semanticMargin = formatScore(thresholds.minimum_semantic_margin);
+
+  if (fuzzyAuto) parts.push(`fuzzy auto >= ${fuzzyAuto}`);
+  if (fuzzyCandidate) parts.push(`candidate >= ${fuzzyCandidate}`);
+  if (semanticAuto) parts.push(`semantic auto >= ${semanticAuto}`);
+  if (semanticCandidate) parts.push(`semantic candidate >= ${semanticCandidate}`);
+  if (margin) parts.push(`margin >= ${margin}`);
+  if (semanticMargin && semanticMargin !== margin) parts.push(`semantic margin >= ${semanticMargin}`);
+
+  return parts.length ? parts.join(" · ") : "-";
+}
+
+function collectThresholdProfiles(items, key) {
+  const profiles = [];
+  for (const item of items) {
+    const text = formatThresholds(item?.[key]);
+    if (text !== "-" && !profiles.includes(text)) profiles.push(text);
+  }
+  return profiles;
+}
+
+function ThresholdSummary({ label, profiles }) {
+  if (!profiles?.length) return null;
+  return (
+    <div className="small text-muted">
+      <span className="fw-semibold">{label} thresholds:</span>{" "}
+      {profiles.join(" | ")}
+    </div>
+  );
+}
+
+function sameThresholdProfiles(left, right) {
+  return left.length > 0
+    && right.length > 0
+    && left.length === right.length
+    && left.every((item, index) => item === right[index]);
+}
+
+function FieldValueThresholdSummary({ fieldProfiles, valueProfiles }) {
+  if (sameThresholdProfiles(fieldProfiles, valueProfiles)) {
+    return <ThresholdSummary label="Decision" profiles={fieldProfiles} />;
+  }
+
+  return (
+    <>
+      <ThresholdSummary label="Label" profiles={fieldProfiles} />
+      <ThresholdSummary label="Value/unit" profiles={valueProfiles} />
+    </>
+  );
+}
+
 function flattenHarmonizationIssues(report) {
   const issues = [...(report?.global_issues || [])];
   for (const entity of Object.values(report?.entities || {})) {
@@ -284,15 +350,26 @@ function canonicalFieldLabel(field) {
     || "-";
 }
 
+function isMeasurementObject(value) {
+  return value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.prototype.hasOwnProperty.call(value, "value")
+    && Object.prototype.hasOwnProperty.call(value, "unit");
+}
+
 function fieldChangeTypes(field) {
   if (field.status === "unmapped" || field.status === "error") return [];
   const changes = [];
   if (field.original_label && field.original_label !== canonicalFieldLabel(field)) changes.push("label");
-  if (
-    field.normalized_value !== undefined
-    && stableJson(field.original_value) !== stableJson(field.normalized_value)
-  ) {
-    changes.push("value");
+
+  if (field.normalized_value !== undefined) {
+    if (isMeasurementObject(field.original_value) && isMeasurementObject(field.normalized_value)) {
+      if (stableJson(field.original_value.value) !== stableJson(field.normalized_value.value)) changes.push("value");
+      if (stableJson(field.original_value.unit) !== stableJson(field.normalized_value.unit)) changes.push("unit");
+    } else if (stableJson(field.original_value) !== stableJson(field.normalized_value)) {
+      changes.push("value");
+    }
   }
   return changes;
 }
@@ -308,6 +385,8 @@ function changeLabel(field) {
 
 function HarmonizationTable({ report }) {
   const rows = flattenHarmonizationEntities(report);
+  const fieldThresholdProfiles = collectThresholdProfiles(rows, "field_thresholds");
+  const valueThresholdProfiles = collectThresholdProfiles(rows, "value_thresholds");
   if (!rows.length) {
     return <Alert variant="secondary">No harmonization field entries.</Alert>;
   }
@@ -315,6 +394,14 @@ function HarmonizationTable({ report }) {
   return (
     <Card>
       <Card.Header className="fw-semibold">Harmonization Fields</Card.Header>
+      {(fieldThresholdProfiles.length > 0 || valueThresholdProfiles.length > 0) && (
+        <Card.Body className="py-2 border-bottom">
+          <FieldValueThresholdSummary
+            fieldProfiles={fieldThresholdProfiles}
+            valueProfiles={valueThresholdProfiles}
+          />
+        </Card.Body>
+      )}
       <div className="table-responsive dq-table-scroll">
         <Table size="sm" hover className="mb-0 align-middle">
           <thead>
@@ -367,6 +454,7 @@ function HarmonizationTable({ report }) {
 
 function TextConceptTable({ report }) {
   const entries = flattenTextConcepts(report);
+  const thresholdProfiles = collectThresholdProfiles(entries, "thresholds");
   if (!entries.length) {
     return null;
   }
@@ -374,6 +462,11 @@ function TextConceptTable({ report }) {
   return (
     <Card>
       <Card.Header className="fw-semibold">Text Harmonization</Card.Header>
+      {thresholdProfiles.length > 0 && (
+        <Card.Body className="py-2 border-bottom">
+          <ThresholdSummary label="Text" profiles={thresholdProfiles} />
+        </Card.Body>
+      )}
       <div className="table-responsive dq-table-scroll">
         <Table size="sm" hover className="mb-0 align-middle">
           <thead>
@@ -477,6 +570,10 @@ function SummaryModal({ type, result, onHide }) {
   const filteredFindings = severity ? findings.filter((finding) => finding.severity === severity) : findings;
   const unmappedFields = fields.filter((field) => field.status === "unmapped");
   const changedFields = fields.filter((field) => isChangedField(field));
+  const changedFieldThresholdProfiles = collectThresholdProfiles(changedFields, "field_thresholds");
+  const changedValueThresholdProfiles = collectThresholdProfiles(changedFields, "value_thresholds");
+  const textThresholdProfiles = collectThresholdProfiles(textConcepts, "thresholds");
+  const vocabularyThresholdProfiles = collectThresholdProfiles(vocabularyFields, "value_thresholds");
 
   let title = "Summary";
   if (type === "entities") title = "Entities";
@@ -520,6 +617,14 @@ function SummaryModal({ type, result, onHide }) {
 
         {type === "changed-fields" && changedFields.length > 0 && (
           <div className="d-flex flex-column gap-2">
+            {(changedFieldThresholdProfiles.length > 0 || changedValueThresholdProfiles.length > 0) && (
+              <Alert variant="secondary" className="py-2 mb-0">
+                <FieldValueThresholdSummary
+                  fieldProfiles={changedFieldThresholdProfiles}
+                  valueProfiles={changedValueThresholdProfiles}
+                />
+              </Alert>
+            )}
             {changedFields.map((field, index) => {
               const changes = fieldChangeTypes(field);
               return (
@@ -552,13 +657,34 @@ function SummaryModal({ type, result, onHide }) {
                       <Row className="g-2 mb-3">
                         <Col xs={12} sm={6}>
                           <div className="small text-muted">Input value</div>
-                          <div className="dq-json-cell dq-diff-value">{prettyJson(field.original_value)}</div>
+                          <div className="dq-json-cell dq-diff-value">
+                            {isMeasurementObject(field.original_value)
+                              ? prettyJson(field.original_value.value)
+                              : prettyJson(field.original_value)}
+                          </div>
                         </Col>
                         <Col xs={12} sm={6}>
                           <div className="small text-muted">Harmonized value</div>
                           <div className="dq-json-cell dq-diff-value">
-                            {field.normalized_value == null ? "-" : prettyJson(field.normalized_value)}
+                            {field.normalized_value == null
+                              ? "-"
+                              : prettyJson(isMeasurementObject(field.normalized_value)
+                                ? field.normalized_value.value
+                                : field.normalized_value)}
                           </div>
+                        </Col>
+                      </Row>
+                    )}
+
+                    {changes.includes("unit") && (
+                      <Row className="g-2 mb-3">
+                        <Col xs={12} sm={6}>
+                          <div className="small text-muted">Input unit</div>
+                          <div className="dq-diff-value">{field.original_value?.unit || "-"}</div>
+                        </Col>
+                        <Col xs={12} sm={6}>
+                          <div className="small text-muted">Harmonized unit</div>
+                          <div className="dq-diff-value">{field.normalized_value?.unit || "-"}</div>
                         </Col>
                       </Row>
                     )}
@@ -641,6 +767,11 @@ function SummaryModal({ type, result, onHide }) {
         {type === "text-harmonization" && (
           textConcepts.length ? (
             <div className="d-flex flex-column gap-2">
+              {textThresholdProfiles.length > 0 && (
+                <Alert variant="secondary" className="py-2 mb-0">
+                  <ThresholdSummary label="Text" profiles={textThresholdProfiles} />
+                </Alert>
+              )}
               {textConcepts.map((entry, index) => {
                 const notes = textEntryIssues(entry, harmonizationIssues);
                 return (
@@ -696,6 +827,11 @@ function SummaryModal({ type, result, onHide }) {
         {type === "controlled-values" && (
           vocabularyFields.length ? (
             <div className="d-flex flex-column gap-2">
+              {vocabularyThresholdProfiles.length > 0 && (
+                <Alert variant="secondary" className="py-2 mb-0">
+                  <ThresholdSummary label="Value" profiles={vocabularyThresholdProfiles} />
+                </Alert>
+              )}
               {vocabularyFields.map((field, index) => (
                 <Card key={`${field.entity_id}-${field.canonical_path}-${index}`} className="shadow-none">
                   <Card.Body>
