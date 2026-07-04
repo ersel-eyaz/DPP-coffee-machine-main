@@ -2571,7 +2571,12 @@ async def init():
         )
         await add_services_instance_2(client, BA=build2, places=places, pstat=pstat)
 
-        # 4) Optional images for the shared static
+        # 4) Instance #3 (DQ demo copy with empty service history)
+        await build_instance_2(
+            client, org_ids=org_ids, places=places, pid=pid, mstat=mstat, pstat=pstat, dpp_static=build1.dpp_static
+        )
+
+        # 5) Optional images for the shared static
         await upload_images_if_available(client, build1.dpp_static)
 
     logger.info("Seeding JURA Z10 done.")

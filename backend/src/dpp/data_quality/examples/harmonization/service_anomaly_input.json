@@ -6,7 +6,7 @@
     {
       "@id": "service-anomaly-cleaning-001",
       "@type": "dpp:CleaningServiceStep",
-      "diagnose": "UI board fault",
+      "diagnose": "broken switch",
       "observedSymptoms": [
         "buttons do not respond",
         "the machine reports a lunar alignment fault"
@@ -27,16 +27,16 @@
     {
       "@id": "service-anomaly-replace-001",
       "@type": "dpp:ReplaceServiceStep",
-      "diagnose": "dull burrs",
+      "diagnose": "thermostat not working",
       "observedSymptoms": [
-        "watery espresso"
+        "water not heating"
       ],
-      "replacedPartId": "part-burr-set-001",
+      "replacedPartId": "part-thermostat-001",
       "dpp:newPart": {
-        "@id": "part-burr-set-replacement-001",
+        "@id": "part-thermostat-replacement-001",
         "@type": "dpp:PartInstance",
         "schema:isVariantOf": {
-          "@id": "part-static-burr-set-001"
+          "@id": "part-static-thermostat-001"
         }
       },
       "costEur": 89.0

@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
+from dpp.data_quality.anomaly.schemas import AnomalyResult
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
+from dpp.data_quality.anomaly.llm_review import build_service_llm_review_findings
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.parser import ParseError, parse_jsonld_document
 from dpp.data_quality.harmonization.services import harmonize_document
@@ -23,6 +25,14 @@ class DataQualityRunRequest(BaseModel):
     scope: DataQualityScope
     mode: DataQualityMode = "both"
     document: Dict[str, Any] = Field(..., description="JSON-LD document to check without storing it in MongoDB.")
+    enable_llm_review: bool = Field(
+        False,
+        description="Optionally add a transparent LLM/RAG-style review layer after deterministic checks.",
+    )
+    review_context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional caller-provided context for review-only checks, e.g. selected service part label.",
+    )
 
 
 router = APIRouter()
@@ -175,6 +185,17 @@ async def run_data_quality(request: DataQualityRunRequest) -> Dict[str, Any]:
             anomaly_result = analyze_harmonization_result(result)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Anomaly analysis failed: {exc}") from exc
+
+        if request.enable_llm_review and scope_name == "service":
+            llm_findings = await build_service_llm_review_findings(
+                result,
+                deterministic_findings=anomaly_result.findings,
+                review_context=request.review_context,
+            )
+            anomaly_result = AnomalyResult(
+                scope_name=anomaly_result.scope_name,
+                findings=[*anomaly_result.findings, *llm_findings],
+            )
 
         payload["anomaly_report"] = build_anomaly_report(anomaly_result)
         payload["has_errors"] = result.has_errors() or anomaly_result.has_errors()

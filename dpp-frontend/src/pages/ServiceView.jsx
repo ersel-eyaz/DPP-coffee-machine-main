@@ -46,6 +46,9 @@ export default function ServiceView() {
   const [newSerial, setNewSerial] = useState("");
   const [newBatch, setNewBatch] = useState("");
   const [treeRefreshSeq, setTreeRefreshSeq] = useState(0);
+  const [qualityChecking, setQualityChecking] = useState(false);
+  const [qualityResult, setQualityResult] = useState(null);
+  const [qualityErr, setQualityErr] = useState(null);
 
   useEffect(() => {
     let on = true;
@@ -103,6 +106,11 @@ export default function ServiceView() {
       on = false;
     };
   }, []); // run once
+
+  useEffect(() => {
+    setQualityResult(null);
+    setQualityErr(null);
+  }, [stepType, selPartId, costEur, diagnose, symptomsStr, newStaticId, newSerial, newBatch]);
 
   if (loading)
     return (
@@ -253,8 +261,84 @@ export default function ServiceView() {
     }
   };
 
+  const buildPendingServiceQualityDocument = () => {
+    const node = {
+      "@id": "pending-service-step",
+      "@type": `dpp:${stepType}`,
+      costEur: Number(costEur) || 0,
+      diagnose: diagnose || "",
+      observedSymptoms: symptomsStr
+        .split(/[;,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    };
+
+    if (stepType === "RepairServiceStep") {
+      node.repairedPartId = selPartId;
+    } else if (stepType === "CleaningServiceStep") {
+      node.cleanedPartId = selPartId;
+    } else if (stepType === "ReplaceServiceStep") {
+      node.replacedPartId = selPartId;
+      node.newPart = { "@id": newStaticId || "pending-new-part", "@type": "dpp:PartInstance" };
+    } else if (stepType === "RemanufacturingServiceStep" || stepType === "RefurbishmentServiceStep") {
+      node.repairedPartIds = [];
+      node.cleanedPartIds = [];
+      node.replacedAndNewParts = [
+        [selPartId, { "@id": newStaticId || "pending-new-part", "@type": "dpp:PartInstance" }],
+      ];
+    }
+
+    return {
+      "@context": {
+        dpp: "https://example.com/dpp#",
+        schema: "https://schema.org/",
+      },
+      "@graph": [node],
+    };
+  };
+
+  const runServiceQualityCheck = async () => {
+    setQualityChecking(true);
+    setQualityErr(null);
+    setQualityResult(null);
+    try {
+      const selectedPart = partOptions.find((part) => part.id === selPartId);
+      const response = await api.runDataQuality({
+        scope: "service",
+        mode: "both",
+        document: buildPendingServiceQualityDocument(),
+        enable_llm_review: true,
+        review_context: {
+          selectedPartId: selPartId,
+          selectedPartLabel: selectedPart?.label || selPartId,
+          selectedServiceType: stepType,
+        },
+      });
+      setQualityResult(response);
+      return response;
+    } catch (e) {
+      const message = e?.message || String(e);
+      setQualityErr(message);
+      setToast({ show: true, msg: `Data quality check failed: ${message}`, variant: "danger" });
+      return null;
+    } finally {
+      setQualityChecking(false);
+    }
+  };
+
   const postStep = async () => {
     try {
+      const quality = await runServiceQualityCheck();
+      if (!quality) return;
+      if (quality.has_errors) {
+        setToast({
+          show: true,
+          msg: "Please review the data-quality errors before saving this service step.",
+          variant: "danger",
+        });
+        return;
+      }
+
       setPosting(true);
       const baseDates = (() => {
         try {
@@ -379,6 +463,11 @@ export default function ServiceView() {
     }
   };
   const discontinued = !!inst?.discontinued;
+  const qualityTextEntries = flattenServiceTextEntries(qualityResult);
+  const qualityFindings = Array.isArray(qualityResult?.anomaly_report?.findings)
+    ? qualityResult.anomaly_report.findings
+    : [];
+  const qualitySummary = qualityResult?.harmonization_report?.summary;
 
   return (
     <Container className="py-3">
@@ -970,20 +1059,145 @@ export default function ServiceView() {
                 />
               </Form.Group>
             </Col>
+
+            <Col md={12}>
+              <Card className="border-info">
+                <Card.Header className="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
+                  <span className="fw-semibold">Data quality check</span>
+                  <Button
+                    size="sm"
+                    variant="outline-info"
+                    onClick={runServiceQualityCheck}
+                    disabled={qualityChecking || !selPartId || !stepType}
+                  >
+                    {qualityChecking ? (
+                      <>
+                        <Spinner animation="border" size="sm" className="me-1" />
+                        Checking…
+                      </>
+                    ) : (
+                      "Check input"
+                    )}
+                  </Button>
+                </Card.Header>
+                <Card.Body>
+                  {!qualityResult && !qualityErr && (
+                    <div className="text-muted small">
+                      Runs harmonization and plausibility checks for this service input before it is saved.
+                    </div>
+                  )}
+                  {qualityErr && <Alert variant="danger" className="py-2 mb-0">{qualityErr}</Alert>}
+                  {qualityResult && (
+                    <div className="d-flex flex-column gap-2">
+                      <div className="d-flex flex-wrap gap-2">
+                        <Badge bg={qualityResult.has_errors ? "danger" : "success"}>
+                          {qualityResult.has_errors ? "Review required" : "No blocking errors"}
+                        </Badge>
+                        <Badge bg="secondary">
+                          Text {qualitySummary?.text_harmonization_status_counts?.normalized ?? 0}/
+                          {qualityTextEntries.length}
+                        </Badge>
+                        <Badge bg={qualityFindings.length ? "warning" : "success"}>
+                          Findings {qualityFindings.length}
+                        </Badge>
+                      </div>
+
+                      {qualityTextEntries.length > 0 && (
+                        <div>
+                          <div className="small fw-semibold mb-1">Text harmonization</div>
+                          <ListGroup variant="flush">
+                            {qualityTextEntries.slice(0, 4).map((entry, index) => (
+                              <ListGroup.Item key={`${entry.field_name}-${index}`} className="px-0 py-1">
+                                <div className="d-flex flex-wrap align-items-center gap-2">
+                                  <Badge bg={entry.status === "normalized" ? "success" : "warning"}>
+                                    {entry.status}
+                                  </Badge>
+                                  <span className="small">{entry.field_name}</span>
+                                  <span className="small text-muted wrap">{entry.original_value}</span>
+                                  {entry.normalized_value && (
+                                    <span className="small fw-semibold">→ {entry.normalized_value}</span>
+                                  )}
+                                </div>
+                              </ListGroup.Item>
+                            ))}
+                          </ListGroup>
+                        </div>
+                      )}
+
+                      {qualityFindings.length > 0 && (
+                        <div>
+                          <div className="small fw-semibold mb-1">Plausibility notes</div>
+                          <ListGroup variant="flush">
+                            {qualityFindings.slice(0, 4).map((finding, index) => (
+                              <ListGroup.Item key={`${finding.check_id}-${index}`} className="px-0 py-1">
+                                <Badge bg={severityVariant(finding.severity)} className="me-2">
+                                  {finding.severity}
+                                </Badge>
+                                {finding.evidence?.check_method === "llm_rag_review" && (
+                                  <Badge bg="secondary" className="me-2">
+                                    LLM/RAG
+                                  </Badge>
+                                )}
+                                <span className="small wrap">{finding.message}</span>
+                              </ListGroup.Item>
+                            ))}
+                          </ListGroup>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card.Body>
+              </Card>
+            </Col>
           </Row>
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={() => setShowReg(false)} disabled={posting}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={postStep} disabled={posting || !selPartId || !stepType}>
-            {posting ? "Saving…" : "Save"}
+          <Button variant="primary" onClick={postStep} disabled={posting || qualityChecking || !selPartId || !stepType}>
+            {posting ? "Saving…" : qualityChecking ? "Checking…" : "Save"}
           </Button>
         </Modal.Footer>
       </Modal>
     </Container>
   );
 }
+
+function severityVariant(severity) {
+  if (severity === "error") return "danger";
+  if (severity === "warning") return "warning";
+  if (severity === "info") return "info";
+  return "secondary";
+}
+
+function flattenServiceTextEntries(result) {
+  const entries = [];
+
+  function collect(value, entity, fieldName) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => collect(item, entity, fieldName));
+      return;
+    }
+    if (value && typeof value === "object" && value.status && value.original_value !== undefined) {
+      entries.push({
+        entity_id: entity.entity_id,
+        entity_type: entity.entity_type,
+        field_name: fieldName,
+        ...value,
+      });
+    }
+  }
+
+  for (const entity of Object.values(result?.harmonization_report?.entities || {})) {
+    for (const [fieldName, value] of Object.entries(entity.text_harmonization || {})) {
+      collect(value, entity, fieldName);
+    }
+  }
+
+  return entries;
+}
+
 function safeNum(n) {
   const v = Number(n);
   return Number.isFinite(v) ? v : "—";

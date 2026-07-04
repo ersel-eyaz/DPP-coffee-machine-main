@@ -2,7 +2,7 @@
 Free-text harmonization helpers for service and secondary-value data.
 
 The normalizer maps open service texts such as observed symptoms and diagnoses
-onto a small seeded canonical concept registry. This keeps the original free
+onto a small OpenRepairData-derived canonical concept registry. This keeps the original free
 text available in the input while adding stable concept identifiers for later
 aggregation, reporting, and prototype analytics.
 

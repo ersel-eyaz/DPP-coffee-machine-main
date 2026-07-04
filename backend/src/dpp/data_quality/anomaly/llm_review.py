@@ -1,0 +1,391 @@
+"""
+Optional LLM-assisted review findings for service data quality.
+
+The deterministic harmonization and anomaly layers remain authoritative. This
+module only adds transparent, review-only suggestions when explicitly requested
+by the caller and when an OpenAI API key is configured.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+import httpx
+
+from dpp.data_quality.anomaly.schemas import AnomalyFinding
+from dpp.data_quality.harmonization.result_access import effective_field_value
+from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
+from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID
+
+
+DEFAULT_LLM_REVIEW_MODEL = "gpt-5.1-mini"
+LLM_REVIEW_PROMPT_VERSION = "service_llm_review_v1"
+LLM_REVIEW_TIMEOUT_SECONDS = 30.0
+
+_SERVICE_PART_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
+    "RepairServiceStep": ("repairedPartId",),
+    "ReplaceServiceStep": ("replacedPartId",),
+    "CleaningServiceStep": ("cleanedPartId",),
+    "RefurbishmentServiceStep": ("repairedPartIds", "cleanedPartIds"),
+    "RemanufacturingServiceStep": ("repairedPartIds", "cleanedPartIds"),
+}
+
+_REVIEW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["reviews"],
+    "properties": {
+        "reviews": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "entity_id",
+                    "verdict",
+                    "severity",
+                    "message",
+                    "confidence",
+                    "evidence_ids",
+                ],
+                "properties": {
+                    "entity_id": {"type": "string"},
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["ok", "review", "likely_inconsistent"],
+                    },
+                    "severity": {"type": "string", "enum": ["info", "warning"]},
+                    "message": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+    },
+}
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _iter_text_entries(value: Any) -> list[dict[str, Any]]:
+    """Flatten text harmonization entries from an entity report section."""
+    if isinstance(value, dict):
+        if "status" in value and "original_value" in value:
+            return [value]
+        entries: list[dict[str, Any]] = []
+        for item in value.values():
+            entries.extend(_iter_text_entries(item))
+        return entries
+
+    if isinstance(value, list):
+        entries = []
+        for item in value:
+            entries.extend(_iter_text_entries(item))
+        return entries
+
+    return []
+
+
+def _field_value(entity: HarmonizedEntity, field_name: str) -> Any | None:
+    field = entity.fields.get(f"{entity.entity_type}.{field_name}")
+    if field is None:
+        return None
+    return effective_field_value(field)
+
+
+def _service_part_references(entity: HarmonizedEntity) -> list[str]:
+    references: list[str] = []
+    for field_name in _SERVICE_PART_CONTEXT_FIELDS.get(entity.entity_type, ()):
+        value = _field_value(entity, field_name)
+        if isinstance(value, list):
+            references.extend(str(item) for item in value if item)
+        elif value:
+            references.append(str(value))
+
+    for existing_part_id, _new_part in entity.paired_embedded_entities.get("replacedAndNewParts", []):
+        references.append(existing_part_id)
+
+    return references
+
+
+def _concept_context(concept_id: str) -> dict[str, Any] | None:
+    concept = TEXT_CONCEPTS_BY_ID.get(concept_id)
+    if concept is None:
+        return None
+
+    return {
+        "concept_id": concept.concept_id,
+        "kind": concept.kind,
+        "label": concept.label,
+        "description": concept.description,
+        "inventory_status": concept.inventory_status,
+        "examples": list(concept.examples[:5]),
+        "applicable_service_types": list(concept.applicable_service_types),
+        "related_part_keywords": list(concept.related_part_keywords),
+    }
+
+
+def _collect_text_context(entity: HarmonizedEntity) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    text_entries: list[dict[str, Any]] = []
+    concepts: dict[str, dict[str, Any]] = {}
+
+    for field_name, value in entity.text_harmonization.items():
+        for index, entry in enumerate(_iter_text_entries(value), start=1):
+            entry_id = f"{entity.entity_id}:{field_name}:{index}"
+            normalized = entry.get("normalized_value")
+            candidate_ids = [
+                candidate.get("concept_id")
+                for candidate in entry.get("candidates", [])
+                if isinstance(candidate, dict)
+            ]
+            concept_ids = [
+                concept_id
+                for concept_id in [normalized, *candidate_ids]
+                if isinstance(concept_id, str)
+            ]
+
+            text_entries.append(
+                {
+                    "evidence_id": entry_id,
+                    "field": field_name,
+                    "original_value": entry.get("original_value"),
+                    "status": entry.get("status"),
+                    "normalized_concept": normalized,
+                    "confidence": entry.get("confidence"),
+                    "method": entry.get("method"),
+                    "candidate_concepts": entry.get("candidates", []),
+                }
+            )
+
+            for concept_id in concept_ids:
+                concept_payload = _concept_context(concept_id)
+                if concept_payload is not None:
+                    concepts[concept_id] = concept_payload
+
+    return text_entries, concepts
+
+
+def _build_review_context(
+    result: HarmonizationResult,
+    deterministic_findings: list[AnomalyFinding],
+    review_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    service_steps: list[dict[str, Any]] = []
+    concepts: dict[str, dict[str, Any]] = {}
+    caller_context = review_context or {}
+
+    for entity in result.iter_entities():
+        if entity.entity_type not in _SERVICE_PART_CONTEXT_FIELDS and not entity.text_harmonization:
+            continue
+
+        text_entries, entity_concepts = _collect_text_context(entity)
+        concepts.update(entity_concepts)
+
+        service_steps.append(
+            {
+                "entity_id": entity.entity_id,
+                "entity_type": entity.entity_type,
+                "part_references": _service_part_references(entity),
+                "caller_context": caller_context,
+                "text_entries": text_entries,
+            }
+        )
+
+    local_findings = [
+        {
+            "check_id": finding.check_id,
+            "severity": finding.severity,
+            "category": finding.category,
+            "entity_id": finding.entity_id,
+            "message": finding.message,
+            "field_path": finding.field_path,
+            "observed_value": finding.observed_value,
+            "expected": finding.expected,
+        }
+        for finding in deterministic_findings
+        if finding.entity_type in _SERVICE_PART_CONTEXT_FIELDS or finding.entity_type is None
+    ]
+
+    return {
+        "task": "review_pending_service_record",
+        "prompt_version": LLM_REVIEW_PROMPT_VERSION,
+        "scope": result.scope_name,
+        "service_steps": service_steps,
+        "retrieved_concepts": list(concepts.values()),
+        "deterministic_findings": local_findings,
+        "limits": {
+            "no_automatic_correction": True,
+            "review_only": True,
+            "use_only_provided_context": True,
+        },
+    }
+
+
+def _unavailable_finding(reason: str) -> AnomalyFinding:
+    return AnomalyFinding(
+        check_id="service_llm_review_unavailable",
+        category="review",
+        severity="info",
+        message=f"LLM/RAG service review was requested but is unavailable: {reason}.",
+        confidence=0.0,
+        evidence={
+            "check_method": "llm_rag_review",
+            "status": "unavailable",
+            "reason": reason,
+            "prompt_version": LLM_REVIEW_PROMPT_VERSION,
+        },
+        review_action="configure_openai_api_key_or_continue_with_deterministic_checks",
+    )
+
+
+def _extract_response_text(response_payload: dict[str, Any]) -> str | None:
+    direct = response_payload.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct
+
+    for item in response_payload.get("output", []):
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content", []):
+            if not isinstance(content, dict):
+                continue
+            text = content.get("text")
+            if isinstance(text, str) and text.strip():
+                return text
+    return None
+
+
+def _findings_from_reviews(reviews: list[dict[str, Any]], model: str) -> list[AnomalyFinding]:
+    findings: list[AnomalyFinding] = []
+
+    for review in reviews:
+        verdict = review.get("verdict")
+        severity = "warning" if verdict == "likely_inconsistent" else "info"
+        if review.get("severity") in {"info", "warning"}:
+            severity = review["severity"]
+        check_id = "service_llm_review_ok" if verdict == "ok" else "service_llm_review_suggestion"
+        message_prefix = "LLM/RAG service review"
+
+        findings.append(
+            AnomalyFinding(
+                check_id=check_id,
+                category="review" if verdict == "ok" else "semantic",
+                severity=severity,
+                message=f"{message_prefix}: {review.get('message', 'Please review this service record.')}",
+                entity_id=review.get("entity_id"),
+                confidence=review.get("confidence"),
+                expected=(
+                    "no additional concern from LLM review"
+                    if verdict == "ok"
+                    else "human review of service type, selected part, and service text consistency"
+                ),
+                evidence={
+                    "check_method": "llm_rag_review",
+                    "verdict": verdict,
+                    "model": model,
+                    "prompt_version": LLM_REVIEW_PROMPT_VERSION,
+                    "evidence_ids": review.get("evidence_ids", []),
+                },
+                review_action="no_action_required" if verdict == "ok" else "review_llm_service_suggestion",
+            )
+        )
+
+    return findings
+
+
+async def build_service_llm_review_findings(
+    result: HarmonizationResult,
+    deterministic_findings: list[AnomalyFinding],
+    review_context: dict[str, Any] | None = None,
+) -> list[AnomalyFinding]:
+    """
+    Return optional LLM/RAG-style review findings for service records.
+
+    The LLM receives a minimized local context package. If configuration is
+    missing or the API call fails, this function returns an informational
+    finding instead of failing the data-quality run.
+    """
+    if result.scope_name != "service":
+        return []
+
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return [_unavailable_finding("OPENAI_API_KEY is not configured")]
+
+    context = _build_review_context(result, deterministic_findings, review_context)
+    if not context["service_steps"]:
+        return []
+
+    model = os.getenv("DPP_DQ_LLM_MODEL", DEFAULT_LLM_REVIEW_MODEL).strip() or DEFAULT_LLM_REVIEW_MODEL
+    timeout = _env_float("DPP_DQ_LLM_TIMEOUT_SECONDS", LLM_REVIEW_TIMEOUT_SECONDS)
+
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a conservative data-quality reviewer for coffee-machine DPP service records. "
+                    "Use only the provided local context, canonical concepts, and deterministic findings. "
+                    "Do not invent machine-specific facts. Do not normalize values. "
+                    "Return one review object for each service step. Use verdict ok when no additional "
+                    "attention is needed. Use review or likely_inconsistent only when the service type, "
+                    "selected part, and service text relation deserves human attention. "
+                    "Keep messages short and cautious."
+                ),
+            },
+            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "service_llm_review",
+                "schema": _REVIEW_SCHEMA,
+                "strict": True,
+            }
+        },
+        "max_output_tokens": 1200,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        return [_unavailable_finding(f"OpenAI API returned HTTP {status}")]
+    except httpx.HTTPError as exc:
+        return [_unavailable_finding(f"OpenAI API request failed ({type(exc).__name__})")]
+
+    response_payload = response.json()
+    response_text = _extract_response_text(response_payload)
+    if response_text is None:
+        return [_unavailable_finding("OpenAI API response did not contain JSON text")]
+
+    try:
+        review_payload = json.loads(response_text)
+    except json.JSONDecodeError:
+        return [_unavailable_finding("OpenAI API response JSON could not be parsed")]
+
+    reviews = review_payload.get("reviews", [])
+    if not isinstance(reviews, list):
+        return [_unavailable_finding("OpenAI API response did not match the review schema")]
+
+    return _findings_from_reviews(reviews, model)

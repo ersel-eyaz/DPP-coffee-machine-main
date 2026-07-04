@@ -53,7 +53,7 @@ SERVICE_SCOPE = ScopeDefinition(
     title="Service Free-Text Harmonization",
     description=(
         "Selected service-step fields used for harmonizing observed symptoms "
-        "and diagnoses into seeded canonical service concepts."
+        "and diagnoses into OpenRepairData-derived canonical service concepts."
     ),
     entities=(*_SERVICE_STEP_ENTITIES, *_SERVICE_CONTEXT_ENTITIES),
     fields=tuple(

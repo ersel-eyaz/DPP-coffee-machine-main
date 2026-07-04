@@ -118,11 +118,11 @@ class ServiceSurfaceFormTests(unittest.TestCase):
 
     def test_core_diagnosis_surface_forms_normalize_without_semantic_fallback(self) -> None:
         expected_concepts = {
-            "pump dead": "pump_fault",
+            "dead pump": "pump_fault",
             "clogged with limescale": "limescale_or_scale_build_up",
             "faulty solenoid": "valve_or_solenoid_fault",
             "plug fuse blown": "fuse_or_thermal_fuse_fault",
-            "plunger cannot pierce capsules": "pod_mechanism_or_lid_fault",
+            "plunger fault": "pod_mechanism_or_lid_fault",
         }
 
         for text, expected_concept in expected_concepts.items():
@@ -139,7 +139,7 @@ class ServiceSurfaceFormTests(unittest.TestCase):
                 {
                     "@id": "service-001",
                     "@type": "dpp:ReplaceServiceStep",
-                    "diagnose": "dull burrs",
+                    "diagnose": "thermostat not working",
                 }
             ],
         }
@@ -148,7 +148,7 @@ class ServiceSurfaceFormTests(unittest.TestCase):
         entity = result.entities["service-001"]
         report_entry = entity.text_harmonization["diagnose"]
 
-        self.assertEqual("dull_burrs", report_entry["normalized_value"])
+        self.assertEqual("thermostat_or_rheostat_fault", report_entry["normalized_value"])
         self.assertEqual("review_candidate", report_entry["inventory_status"])
         self.assertTrue(
             any("review-candidate" in issue.message for issue in entity.issues)

@@ -486,8 +486,8 @@ class AnomalyServiceTests(unittest.TestCase):
                 {
                     "@id": "replace-001",
                     "@type": "dpp:ReplaceServiceStep",
-                    "diagnose": "dull burrs",
-                    "observedSymptoms": ["watery espresso"],
+                    "diagnose": "pump fault",
+                    "observedSymptoms": ["not pumping water"],
                     "replacedPartId": "part-old-001",
                     "newPart": {"@id": "part-new-001"},
                     "costEur": 89.0,
@@ -513,8 +513,8 @@ class AnomalyServiceTests(unittest.TestCase):
                 {
                     "@id": "refurbishment-001",
                     "@type": "dpp:RefurbishmentServiceStep",
-                    "diagnose": "dull burrs",
-                    "observedSymptoms": ["watery espresso"],
+                    "diagnose": "pump fault",
+                    "observedSymptoms": ["not pumping water"],
                     "replacedAndNewParts": replaced_pairs,
                     "costEur": 120.0,
                 }
@@ -534,7 +534,7 @@ class AnomalyServiceTests(unittest.TestCase):
         )
         self.assertEqual([], entity.relations)
 
-    def test_service_diagnosis_part_evidence_mismatch_is_flagged(self) -> None:
+    def test_service_diagnosis_part_evidence_mismatch_is_not_flagged_without_relation_registry(self) -> None:
         document = {
             "@context": {"dpp": "https://example.org/dpp#"},
             "@graph": [
@@ -552,16 +552,10 @@ class AnomalyServiceTests(unittest.TestCase):
 
         result = harmonize_document(document, "service")
         anomaly = analyze_harmonization_result(result)
-        finding = next(
-            item
-            for item in anomaly.findings
-            if item.check_id == "service_diagnosis_part_evidence_mismatch"
+        self.assertNotIn(
+            "service_diagnosis_part_evidence_mismatch",
+            [finding.check_id for finding in anomaly.findings],
         )
-
-        self.assertEqual("info", finding.severity)
-        self.assertEqual("pump_fault", finding.observed_value["diagnosis_concept"])
-        self.assertEqual(["part-burr-set-001"], finding.observed_value["part_references"])
-        self.assertIn("pump", finding.expected["part_keywords_seen_in_relation_evidence"])
 
     def test_service_diagnosis_part_evidence_match_is_not_flagged(self) -> None:
         document = {
@@ -570,9 +564,9 @@ class AnomalyServiceTests(unittest.TestCase):
                 {
                     "@id": "replace-001",
                     "@type": "dpp:ReplaceServiceStep",
-                    "diagnose": "dull burrs",
-                    "observedSymptoms": ["watery espresso"],
-                    "replacedPartId": "part-burr-set-001",
+                    "diagnose": "pump fault",
+                    "observedSymptoms": ["not pumping water"],
+                    "replacedPartId": "part-pump-001",
                     "newPart": {"@id": "part-new-001"},
                     "costEur": 89.0,
                 }
@@ -594,8 +588,8 @@ class AnomalyServiceTests(unittest.TestCase):
                 {
                     "@id": "replace-001",
                     "@type": "dpp:ReplaceServiceStep",
-                    "diagnose": "dull burrs",
-                    "replacedPartId": "part-burr-set-001",
+                    "diagnose": "thermostat not working",
+                    "replacedPartId": "part-thermostat-001",
                 }
             ],
         }
@@ -609,10 +603,10 @@ class AnomalyServiceTests(unittest.TestCase):
         )
 
         self.assertEqual("info", finding.severity)
-        self.assertEqual("dull_burrs", finding.observed_value)
+        self.assertEqual("thermostat_or_rheostat_fault", finding.observed_value)
         self.assertEqual("confirm_or_reject_review_candidate_concept", finding.review_action)
 
-    def test_llm_relation_hint_part_mismatch_is_soft_flagged(self) -> None:
+    def test_llm_relation_hint_part_mismatch_is_not_flagged_without_relation_registry(self) -> None:
         document = {
             "@context": {"dpp": "https://example.org/dpp#"},
             "@graph": [
@@ -627,16 +621,10 @@ class AnomalyServiceTests(unittest.TestCase):
 
         result = harmonize_document(document, "service")
         anomaly = analyze_harmonization_result(result)
-        finding = next(
-            item
-            for item in anomaly.findings
-            if item.check_id == "service_diagnosis_part_evidence_mismatch"
+        self.assertNotIn(
+            "service_diagnosis_part_evidence_mismatch",
+            [finding.check_id for finding in anomaly.findings],
         )
-
-        self.assertEqual("info", finding.severity)
-        self.assertEqual("heating_element_failure", finding.observed_value["diagnosis_concept"])
-        self.assertIn("llm_minimal_heating_element_failure", finding.expected["hint_ids"])
-        self.assertIn("minimal_evidence_llm_candidate", finding.evidence["support_levels"])
 
     def test_report_summary_counts_check_methods(self) -> None:
         result = AnomalyResult(
