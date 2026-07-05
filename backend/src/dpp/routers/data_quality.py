@@ -27,7 +27,7 @@ class DataQualityRunRequest(BaseModel):
     document: Dict[str, Any] = Field(..., description="JSON-LD document to check without storing it in MongoDB.")
     enable_llm_review: bool = Field(
         False,
-        description="Optionally add a transparent LLM/RAG-style review layer after deterministic checks.",
+        description="Optionally add a transparent LLM-assisted service review layer after deterministic checks.",
     )
     review_context: Dict[str, Any] = Field(
         default_factory=dict,

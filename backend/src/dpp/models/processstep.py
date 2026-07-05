@@ -103,6 +103,14 @@ class SecondaryValueStep(ProcessStep):
     costEur: float = Field(..., ge=0.0, description="Direct cost of the step in EUR (>= 0).")
     diagnose: str = Field(default="", description="Diagnosis captured during the step.")
     observedSymptoms: List[str] = Field(default_factory=list, description="Symptoms observed prior to the step.")
+    originalDiagnose: Optional[str] = Field(
+        default=None,
+        description="Original diagnosis text before optional data-quality harmonization.",
+    )
+    originalObservedSymptoms: List[str] = Field(
+        default_factory=list,
+        description="Original observed symptom texts before optional data-quality harmonization.",
+    )
 
 
 class RepairServiceStep(SecondaryValueStep):

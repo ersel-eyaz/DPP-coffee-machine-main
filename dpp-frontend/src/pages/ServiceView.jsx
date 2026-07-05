@@ -151,18 +151,43 @@ export default function ServiceView() {
     if (!Number.isFinite(v)) return "—";
     return v.toLocaleString(undefined, { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
   };
-  const renderSymptoms = (sym) => {
+  const renderSymptoms = (sym, originalSymptoms = []) => {
     const arr = Array.isArray(sym) ? sym : typeof sym === "string" ? sym.split(/[;,]+/) : [];
     const clean = arr.map((s) => String(s).trim()).filter(Boolean);
+    const originals = Array.isArray(originalSymptoms)
+      ? originalSymptoms.map((s) => String(s).trim())
+      : typeof originalSymptoms === "string"
+        ? originalSymptoms.split(/[;,]+/).map((s) => s.trim())
+        : [];
     if (!clean.length) return "—";
     return (
-      <ol className="mb-0 ps-3 sym-list">
+      <div className="sym-chip-list">
         {clean.map((s, i) => (
-          <li key={i} className="sym-item">
-            {s}
-          </li>
+          <span key={i} className="sym-chip">
+            <span className="sym-token">{s}</span>
+            {originalInputTip(originals[i], s)}
+          </span>
         ))}
-      </ol>
+      </div>
+    );
+  };
+  const rawSymptomInputList = () =>
+    symptomsStr
+      .split(/[;,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const originalInputTip = (original, current) => {
+    const originalText = Array.isArray(original) ? original.filter(Boolean).join("; ") : String(original || "").trim();
+    const currentText = Array.isArray(current) ? current.filter(Boolean).join("; ") : String(current || "").trim();
+    if (!originalText || originalText === currentText) return null;
+    return (
+      <InfoTip
+        className="btn p-0 ms-1 text-body-secondary bg-transparent border-0 history-original-tip"
+        size={13}
+        placement="top"
+        label="Original input"
+        text={`Original input: ${originalText}`}
+      />
     );
   };
 
@@ -326,6 +351,24 @@ export default function ServiceView() {
     }
   };
 
+  const cleanServiceTextFromQuality = (quality) => {
+    const node = Array.isArray(quality?.data?.["@graph"]) ? quality.data["@graph"][0] : null;
+    const cleanSymptoms = node?.["dpp:observedSymptoms"] ?? node?.observedSymptoms;
+    const symptomList = Array.isArray(cleanSymptoms)
+      ? cleanSymptoms
+      : typeof cleanSymptoms === "string"
+        ? [cleanSymptoms]
+        : symptomsStr
+            .split(/[;,]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+    return {
+      diagnose: node?.["dpp:diagnose"] ?? node?.diagnose ?? diagnose ?? "",
+      observedSymptoms: symptomList,
+    };
+  };
+
   const postStep = async () => {
     try {
       const quality = await runServiceQualityCheck();
@@ -351,17 +394,17 @@ export default function ServiceView() {
         }
       })();
       const processedAt = placeId ? { id: String(placeId), collection: "place" } : undefined;
+      const cleanServiceText = cleanServiceTextFromQuality(quality);
       const payloadCommon = {
         type: stepType,
         ...baseDates,
         ...(processedAt ? { processedAt } : {}),
         ghgEmissionRecords: [],
         costEur: Number(costEur) || 0,
-        diagnose: diagnose || "",
-        observedSymptoms: symptomsStr
-          .split(/[;,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
+        diagnose: cleanServiceText.diagnose,
+        observedSymptoms: cleanServiceText.observedSymptoms,
+        originalDiagnose: diagnose || "",
+        originalObservedSymptoms: rawSymptomInputList(),
       };
 
       let payload = payloadCommon;
@@ -467,6 +510,12 @@ export default function ServiceView() {
   const qualityFindings = Array.isArray(qualityResult?.anomaly_report?.findings)
     ? qualityResult.anomaly_report.findings
     : [];
+  const qualityLlmFindings = qualityFindings.filter(
+    (finding) => finding?.evidence?.check_method === "llm_service_review",
+  );
+  const qualityPlausibilityFindings = qualityFindings.filter(
+    (finding) => finding?.evidence?.check_method !== "llm_service_review",
+  );
   const qualitySummary = qualityResult?.harmonization_report?.summary;
 
   return (
@@ -476,12 +525,16 @@ export default function ServiceView() {
         .history-table { table-layout: fixed; }
         .history-table th, .history-table td { vertical-align: top; }
         @media (max-width: 576px) { .col-diagnose, .col-symptoms { width: 100%; } }
-        .sym-list .sym-item { margin-bottom: 0; }
+        .sym-chip-list { display: flex; flex-wrap: nowrap; gap: .35rem .5rem; align-items: center; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-right: .4rem; padding-bottom: .1rem; scroll-padding-right: .4rem; }
+        .sym-chip { display: inline-flex; align-items: center; gap: .25rem; max-width: 100%; line-height: 1.35; }
+        .sym-token { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
         .diag-chip { display:inline-flex; align-items:center; gap:.5rem; padding:.25rem .5rem; border-radius:.5rem; background:#f8f9fa; }
         .diag-row { gap:.75rem; }
         .diag-sep { width: 1px; height: 18px; background: #e0e0e0; display:inline-block; }
         .diag-meta { display:inline-flex; align-items:center; gap:.5rem; flex-wrap: wrap; }
         .diag-prog { min-width: 120px; }
+        .quality-llm-review { border-left: 3px solid #6f42c1; background: #f7f3ff; padding: .5rem .65rem; }
+        .history-original-tip { display: inline-flex; flex: 0 0 auto; vertical-align: -0.1em; line-height: 1; margin-left: .1rem !important; }
       `}</style>
       <Row className="align-items-center mb-2">
         <Col>
@@ -718,8 +771,13 @@ export default function ServiceView() {
                             <td className="wrap">{parts.length ? parts.join(", ") : "—"}</td>
                             <td className="text-end">{eur(s.costEUR ?? s.cost)}</td>
                             <td className="wrap">{fmtDate(s.beginDate)}</td>
-                            <td className="wrap">{s.diagnose || s.diagnosis || "—"}</td>
-                            <td className="wrap">{renderSymptoms(s.observedSymptoms)}</td>
+                            <td className="wrap">
+                              {s.diagnose || s.diagnosis || "—"}
+                              {originalInputTip(s.originalDiagnose, s.diagnose || s.diagnosis)}
+                            </td>
+                            <td className="wrap">
+                              {renderSymptoms(s.observedSymptoms, s.originalObservedSymptoms)}
+                            </td>
                           </tr>
                         );
                       })}
@@ -1066,7 +1124,7 @@ export default function ServiceView() {
                   <span className="fw-semibold">Data quality check</span>
                   <Button
                     size="sm"
-                    variant="outline-info"
+                    variant="primary"
                     onClick={runServiceQualityCheck}
                     disabled={qualityChecking || !selPartId || !stepType}
                   >
@@ -1090,16 +1148,14 @@ export default function ServiceView() {
                   {qualityResult && (
                     <div className="d-flex flex-column gap-2">
                       <div className="d-flex flex-wrap gap-2">
-                        <Badge bg={qualityResult.has_errors ? "danger" : "success"}>
-                          {qualityResult.has_errors ? "Review required" : "No blocking errors"}
-                        </Badge>
+                        {qualityResult.has_errors && <Badge bg="danger">Review required</Badge>}
                         <Badge bg="secondary">
                           Text {qualitySummary?.text_harmonization_status_counts?.normalized ?? 0}/
                           {qualityTextEntries.length}
                         </Badge>
-                        <Badge bg={qualityFindings.length ? "warning" : "success"}>
-                          Findings {qualityFindings.length}
-                        </Badge>
+                        {qualityPlausibilityFindings.length > 0 && (
+                          <Badge bg="warning">Plausibility {qualityPlausibilityFindings.length}</Badge>
+                        )}
                       </div>
 
                       {qualityTextEntries.length > 0 && (
@@ -1118,26 +1174,41 @@ export default function ServiceView() {
                                     <span className="small fw-semibold">→ {entry.normalized_value}</span>
                                   )}
                                 </div>
+                                {entry.status !== "normalized" && renderTextCandidateTrace(entry)}
                               </ListGroup.Item>
                             ))}
                           </ListGroup>
                         </div>
                       )}
 
-                      {qualityFindings.length > 0 && (
+                      {qualityPlausibilityFindings.length > 0 && (
                         <div>
                           <div className="small fw-semibold mb-1">Plausibility notes</div>
                           <ListGroup variant="flush">
-                            {qualityFindings.slice(0, 4).map((finding, index) => (
+                            {qualityPlausibilityFindings.slice(0, 4).map((finding, index) => (
                               <ListGroup.Item key={`${finding.check_id}-${index}`} className="px-0 py-1">
                                 <Badge bg={severityVariant(finding.severity)} className="me-2">
                                   {finding.severity}
                                 </Badge>
-                                {finding.evidence?.check_method === "llm_rag_review" && (
-                                  <Badge bg="secondary" className="me-2">
-                                    LLM/RAG
-                                  </Badge>
-                                )}
+                                <span className="small wrap">{finding.message}</span>
+                              </ListGroup.Item>
+                            ))}
+                          </ListGroup>
+                        </div>
+                      )}
+
+                      {qualityLlmFindings.length > 0 && (
+                        <div className="quality-llm-review">
+                          <div className="small fw-semibold mb-1">LLM service review</div>
+                          <ListGroup variant="flush">
+                            {qualityLlmFindings.slice(0, 2).map((finding, index) => (
+                              <ListGroup.Item
+                                key={`${finding.check_id}-${index}`}
+                                className="px-0 py-1 border-0 bg-transparent"
+                              >
+                                <Badge bg={severityVariant(finding.severity)} className="me-2">
+                                  {finding.severity}
+                                </Badge>
                                 <span className="small wrap">{finding.message}</span>
                               </ListGroup.Item>
                             ))}
@@ -1201,6 +1272,52 @@ function flattenServiceTextEntries(result) {
 function safeNum(n) {
   const v = Number(n);
   return Number.isFinite(v) ? v : "—";
+}
+
+function renderTextCandidateTrace(entry) {
+  const candidates = Array.isArray(entry.closest_candidates) && entry.closest_candidates.length
+    ? entry.closest_candidates
+    : Array.isArray(entry.candidates)
+      ? entry.candidates
+      : [];
+  if (!candidates.length) return null;
+
+  const thresholds = entry.thresholds || {};
+  const rows = candidates.slice(0, 2).map((candidate) => {
+    const method = candidate.match_type || candidate.method || "candidate";
+    const score = formatScore(candidate.confidence);
+    const reportingThreshold = method === "semantic"
+      ? thresholds.candidate_semantic_reporting_threshold
+      : thresholds.candidate_fuzzy_reporting_threshold;
+    const autoThreshold = method === "semantic"
+      ? thresholds.automatic_semantic_threshold
+      : thresholds.automatic_fuzzy_threshold;
+    return {
+      method,
+      conceptId: candidate.concept_id,
+      score,
+      reportingThreshold: formatScore(reportingThreshold),
+      autoThreshold: formatScore(autoThreshold),
+    };
+  });
+
+  return (
+    <div className="small text-muted mt-1 wrap">
+      <div>Closest candidates below auto-match:</div>
+      <ul className="mb-0 ps-3">
+        {rows.map((row) => (
+          <li key={`${row.method}-${row.conceptId}`}>
+            {row.method}: {row.conceptId} {row.score} (candidate &gt;= {row.reportingThreshold}, auto &gt;= {row.autoThreshold})
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function formatScore(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : "—";
 }
 
 /**

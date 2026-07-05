@@ -1434,7 +1434,9 @@ async def get_service_summary(instance_id: str, request: Request) -> Dict[str, A
                 or getattr(step, "cost", None),
                 "beginDate": getattr(step, "beginDate", None),
                 "diagnose": getattr(step, "diagnose", None) or getattr(step, "diagnosis", None),
+                "originalDiagnose": getattr(step, "originalDiagnose", None),
                 "observedSymptoms": observed_list,
+                "originalObservedSymptoms": list(getattr(step, "originalObservedSymptoms", None) or []),
                 "partNames": part_names,
             }
         )

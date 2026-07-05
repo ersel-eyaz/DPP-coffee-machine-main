@@ -20,7 +20,7 @@ from dpp.data_quality.harmonization.schemas import HarmonizationResult, Harmoniz
 from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID
 
 
-DEFAULT_LLM_REVIEW_MODEL = "gpt-5.1-mini"
+DEFAULT_LLM_REVIEW_MODEL = "gpt-5.4-mini"
 LLM_REVIEW_PROMPT_VERSION = "service_llm_review_v1"
 LLM_REVIEW_TIMEOUT_SECONDS = 30.0
 
@@ -236,10 +236,10 @@ def _unavailable_finding(reason: str) -> AnomalyFinding:
         check_id="service_llm_review_unavailable",
         category="review",
         severity="info",
-        message=f"LLM/RAG service review was requested but is unavailable: {reason}.",
+        message=f"LLM service review was requested but is unavailable: {reason}.",
         confidence=0.0,
         evidence={
-            "check_method": "llm_rag_review",
+            "check_method": "llm_service_review",
             "status": "unavailable",
             "reason": reason,
             "prompt_version": LLM_REVIEW_PROMPT_VERSION,
@@ -267,14 +267,20 @@ def _extract_response_text(response_payload: dict[str, Any]) -> str | None:
 
 def _findings_from_reviews(reviews: list[dict[str, Any]], model: str) -> list[AnomalyFinding]:
     findings: list[AnomalyFinding] = []
+    reviews_by_entity: dict[str, list[dict[str, Any]]] = {}
 
     for review in reviews:
+        entity_id = str(review.get("entity_id") or "service-step")
+        reviews_by_entity.setdefault(entity_id, []).append(review)
+
+    for entity_id, entity_reviews in reviews_by_entity.items():
+        review = _merge_entity_reviews(entity_id, entity_reviews)
         verdict = review.get("verdict")
         severity = "warning" if verdict == "likely_inconsistent" else "info"
         if review.get("severity") in {"info", "warning"}:
             severity = review["severity"]
         check_id = "service_llm_review_ok" if verdict == "ok" else "service_llm_review_suggestion"
-        message_prefix = "LLM/RAG service review"
+        message_prefix = "LLM service review"
 
         findings.append(
             AnomalyFinding(
@@ -282,7 +288,7 @@ def _findings_from_reviews(reviews: list[dict[str, Any]], model: str) -> list[An
                 category="review" if verdict == "ok" else "semantic",
                 severity=severity,
                 message=f"{message_prefix}: {review.get('message', 'Please review this service record.')}",
-                entity_id=review.get("entity_id"),
+                entity_id=entity_id,
                 confidence=review.get("confidence"),
                 expected=(
                     "no additional concern from LLM review"
@@ -290,7 +296,7 @@ def _findings_from_reviews(reviews: list[dict[str, Any]], model: str) -> list[An
                     else "human review of service type, selected part, and service text consistency"
                 ),
                 evidence={
-                    "check_method": "llm_rag_review",
+                    "check_method": "llm_service_review",
                     "verdict": verdict,
                     "model": model,
                     "prompt_version": LLM_REVIEW_PROMPT_VERSION,
@@ -303,13 +309,66 @@ def _findings_from_reviews(reviews: list[dict[str, Any]], model: str) -> list[An
     return findings
 
 
+def _merge_entity_reviews(entity_id: str, reviews: list[dict[str, Any]]) -> dict[str, Any]:
+    if len(reviews) == 1:
+        return reviews[0]
+
+    verdict_rank = {"ok": 0, "review": 1, "likely_inconsistent": 2}
+    severity_rank = {"info": 0, "warning": 1}
+    primary = max(
+        reviews,
+        key=lambda item: (
+            verdict_rank.get(item.get("verdict"), 0),
+            severity_rank.get(item.get("severity"), 0),
+            float(item.get("confidence") or 0.0),
+        ),
+    )
+    messages = [
+        str(item.get("message")).strip()
+        for item in reviews
+        if isinstance(item.get("message"), str) and str(item.get("message")).strip()
+    ]
+    evidence_ids: list[str] = []
+    for item in reviews:
+        evidence_ids.extend(
+            str(evidence_id)
+            for evidence_id in item.get("evidence_ids", [])
+            if isinstance(evidence_id, str)
+        )
+
+    merged = dict(primary)
+    merged["entity_id"] = entity_id
+    merged["message"] = _compact_merged_review_message(messages)
+    merged["evidence_ids"] = list(dict.fromkeys(evidence_ids))
+    merged["confidence"] = max(float(item.get("confidence") or 0.0) for item in reviews)
+    return merged
+
+
+def _compact_merged_review_message(messages: list[str]) -> str:
+    unique_messages = list(dict.fromkeys(messages))
+    if not unique_messages:
+        return "Review the service type, selected part, and service text before saving."
+
+    lower_messages = " ".join(message.lower() for message in unique_messages)
+    if "coverage gap" in lower_messages and "inconsisten" not in lower_messages:
+        return (
+            "The unresolved service texts look plausible for the selected service type and part, "
+            "but are not covered by the current service concepts; review the service text before saving."
+        )
+    if "inconsisten" in lower_messages:
+        return (
+            "The selected service type, part, and service text may be inconsistent; review the record before saving."
+        )
+    return unique_messages[0]
+
+
 async def build_service_llm_review_findings(
     result: HarmonizationResult,
     deterministic_findings: list[AnomalyFinding],
     review_context: dict[str, Any] | None = None,
 ) -> list[AnomalyFinding]:
     """
-    Return optional LLM/RAG-style review findings for service records.
+    Return optional LLM-assisted review findings for service records.
 
     The LLM receives a minimized local context package. If configuration is
     missing or the API call fails, this function returns an informational
@@ -338,10 +397,17 @@ async def build_service_llm_review_findings(
                     "You are a conservative data-quality reviewer for coffee-machine DPP service records. "
                     "Use only the provided local context, canonical concepts, and deterministic findings. "
                     "Do not invent machine-specific facts. Do not normalize values. "
-                    "Return one review object for each service step. Use verdict ok when no additional "
-                    "attention is needed. Use review or likely_inconsistent only when the service type, "
+                    "Return exactly one review object for each service step, not one object per text entry. "
+                    "Evaluate the selected service type, selected part, and service text together. "
+                    "Use verdict ok when no additional attention is needed. Use review or likely_inconsistent only when the service type, "
                     "selected part, and service text relation deserves human attention. "
-                    "Keep messages short and cautious."
+                    "When service text is unresolved, distinguish likely missing service-concept coverage from "
+                    "possible consistency problems. If the original text appears lexically related to the "
+                    "selected part or service type but is not covered by the canonical concepts, say that "
+                    "it looks plausible but is not covered by the current service concepts, rather than calling it a clear inconsistency. "
+                    "Messages must mention the selected service type, selected part label, and one relevant "
+                    "original service text. Do not use vague phrases such as 'check with the selected service type' "
+                    "or 'needs human check'. Keep messages short, cautious, and actionable."
                 ),
             },
             {"role": "user", "content": json.dumps(context, ensure_ascii=False)},

@@ -74,6 +74,7 @@ class TextNormalizationResult:
     method: str | None
     status: TextMatchStatus
     candidates: tuple[TextNormalizationCandidate, ...] = ()
+    closest_candidates: tuple[TextNormalizationCandidate, ...] = ()
 
     def as_clean_value(self) -> str | None:
         """Return the compact concept id for clean JSON-LD output."""
@@ -102,6 +103,16 @@ class TextNormalizationResult:
                     "match_type": candidate.match_type,
                 }
                 for candidate in self.candidates
+            ]
+        if self.closest_candidates:
+            payload["closest_candidates"] = [
+                {
+                    "concept_id": candidate.concept_id,
+                    "label": candidate.label,
+                    "confidence": candidate.confidence,
+                    "match_type": candidate.match_type,
+                }
+                for candidate in self.closest_candidates
             ]
         return payload
 
@@ -295,6 +306,38 @@ def resolve_text_value(
     return None
 
 
+def _closest_diagnostic_candidates(
+    kind: TextConceptKind,
+    text: str,
+    *,
+    enable_semantic: bool,
+) -> tuple[TextNormalizationCandidate, ...]:
+    """Return top below-threshold fuzzy/semantic candidates for traceability only."""
+    closest: list[TextNormalizationCandidate] = []
+    fuzzy_candidates = find_text_value_candidates(kind, text, min_confidence=0.0)
+    if fuzzy_candidates:
+        closest.append(fuzzy_candidates[0])
+
+    if enable_semantic:
+        try:
+            semantic_candidates = find_text_semantic_candidates(kind, text, min_confidence=0.0)
+        except TextNormalizationError:
+            semantic_candidates = []
+        if semantic_candidates:
+            closest.append(semantic_candidates[0])
+
+    deduplicated: list[TextNormalizationCandidate] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in closest:
+        key = (candidate.match_type, candidate.concept_id)
+        if key in seen:
+            continue
+        deduplicated.append(candidate)
+        seen.add(key)
+
+    return tuple(deduplicated)
+
+
 def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: bool = True) -> TextNormalizationResult:
     """Normalize one free-text value into a canonical concept result."""
     if not isinstance(text, str):
@@ -341,6 +384,8 @@ def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: b
         except TextNormalizationError:
             candidates = []
 
+    closest_candidates = _closest_diagnostic_candidates(kind, stripped, enable_semantic=enable_semantic)
+
     if candidates:
         return TextNormalizationResult(
             original_text=stripped,
@@ -350,6 +395,7 @@ def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: b
             method=None,
             status="ambiguous",
             candidates=tuple(candidates[:3]),
+            closest_candidates=closest_candidates,
         )
 
     return TextNormalizationResult(
@@ -359,6 +405,7 @@ def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: b
         confidence=None,
         method=None,
         status="unresolved",
+        closest_candidates=closest_candidates,
     )
 
 

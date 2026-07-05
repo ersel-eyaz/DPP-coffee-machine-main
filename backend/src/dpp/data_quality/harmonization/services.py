@@ -470,6 +470,16 @@ def _free_text_report_entry(result: Any) -> dict[str, Any]:
             for candidate in result.candidates[:3]
         ]
 
+    if result.closest_candidates:
+        entry["closest_candidates"] = [
+            {
+                "concept_id": candidate.concept_id,
+                "confidence": candidate.confidence,
+                "method": candidate.match_type,
+            }
+            for candidate in result.closest_candidates[:2]
+        ]
+
     return entry
 
 
