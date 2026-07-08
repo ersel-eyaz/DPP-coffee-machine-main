@@ -1,9 +1,10 @@
 """
-Optional LLM-assisted review findings for service data quality.
+LLM-assisted review findings for service data quality.
 
 The deterministic harmonization and anomaly layers remain authoritative. This
-module only adds transparent, review-only suggestions when explicitly requested
-by the caller and when an OpenAI API key is configured.
+module adds transparent, review-only suggestions when requested by the caller.
+If the API key or model is unavailable, it fails soft and returns an
+informational finding instead of blocking deterministic checks.
 """
 
 from __future__ import annotations
@@ -15,6 +16,10 @@ from typing import Any
 import httpx
 
 from dpp.data_quality.anomaly.schemas import AnomalyFinding
+from dpp.data_quality.harmonization.free_text import (
+    AMBIGUOUS_TEXT_FUZZY_THRESHOLD,
+    AMBIGUOUS_TEXT_SEMANTIC_THRESHOLD,
+)
 from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
 from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID
@@ -128,11 +133,55 @@ def _concept_context(concept_id: str) -> dict[str, Any] | None:
         "kind": concept.kind,
         "label": concept.label,
         "description": concept.description,
+        "evidence_source": "core_registry",
         "inventory_status": concept.inventory_status,
         "examples": list(concept.examples[:5]),
         "applicable_service_types": list(concept.applicable_service_types),
         "related_part_keywords": list(concept.related_part_keywords),
     }
+
+
+def _candidate_entries(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return report candidates and closest candidates without duplicates."""
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str | None]] = set()
+    for bucket_name in ("candidates", "closest_candidates"):
+        for candidate in entry.get(bucket_name, []):
+            if not isinstance(candidate, dict):
+                continue
+            key = (
+                str(candidate.get("concept_id") or ""),
+                str(candidate.get("source") or "core_registry"),
+                candidate.get("feedback_id"),
+            )
+            if key in seen:
+                continue
+            enriched = dict(candidate)
+            enriched["candidate_bucket"] = bucket_name
+            enriched["decision_role"] = _candidate_decision_role(enriched)
+            candidates.append(enriched)
+            seen.add(key)
+    return candidates
+
+
+def _candidate_threshold(candidate: dict[str, Any]) -> float:
+    method = str(candidate.get("method") or candidate.get("match_type") or "")
+    if "semantic" in method:
+        return AMBIGUOUS_TEXT_SEMANTIC_THRESHOLD
+    return AMBIGUOUS_TEXT_FUZZY_THRESHOLD
+
+
+def _candidate_decision_role(candidate: dict[str, Any]) -> str:
+    if candidate.get("candidate_bucket") == "candidates":
+        return "candidate"
+
+    confidence = candidate.get("confidence")
+    try:
+        score = float(confidence)
+    except (TypeError, ValueError):
+        return "trace_only"
+
+    return "candidate" if score >= _candidate_threshold(candidate) else "trace_only"
 
 
 def _collect_text_context(entity: HarmonizedEntity) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -143,10 +192,20 @@ def _collect_text_context(entity: HarmonizedEntity) -> tuple[list[dict[str, Any]
         for index, entry in enumerate(_iter_text_entries(value), start=1):
             entry_id = f"{entity.entity_id}:{field_name}:{index}"
             normalized = entry.get("normalized_value")
+            candidate_entries = _candidate_entries(entry)
+            llm_candidate_entries = [
+                candidate
+                for candidate in candidate_entries
+                if candidate.get("decision_role") == "candidate"
+            ]
+            learned_feedback_candidates = [
+                candidate
+                for candidate in llm_candidate_entries
+                if candidate.get("source") == "learned_feedback"
+            ]
             candidate_ids = [
                 candidate.get("concept_id")
-                for candidate in entry.get("candidates", [])
-                if isinstance(candidate, dict)
+                for candidate in llm_candidate_entries
             ]
             concept_ids = [
                 concept_id
@@ -163,7 +222,15 @@ def _collect_text_context(entity: HarmonizedEntity) -> tuple[list[dict[str, Any]
                     "normalized_concept": normalized,
                     "confidence": entry.get("confidence"),
                     "method": entry.get("method"),
-                    "candidate_concepts": entry.get("candidates", []),
+                    "candidate_concepts": llm_candidate_entries,
+                    "learned_feedback_candidates": learned_feedback_candidates,
+                    "evidence_sources": sorted(
+                        {
+                            str(candidate.get("source") or "core_registry")
+                            for candidate in llm_candidate_entries
+                        }
+                    ),
+                    "trace_only_candidates_omitted": len(candidate_entries) - len(llm_candidate_entries),
                 }
             )
 
@@ -227,6 +294,12 @@ def _build_review_context(
             "no_automatic_correction": True,
             "review_only": True,
             "use_only_provided_context": True,
+            "do_not_treat_learned_feedback_as_core": True,
+        },
+        "evidence_source_policy": {
+            "core_registry": "Stable controlled vocabulary evidence.",
+            "learned_feedback": "Reviewer-approved local evidence; weaker than core registry.",
+            "candidate_concept": "Unpromoted concept candidate; use only as review context.",
         },
     }
 
@@ -368,7 +441,7 @@ async def build_service_llm_review_findings(
     review_context: dict[str, Any] | None = None,
 ) -> list[AnomalyFinding]:
     """
-    Return optional LLM-assisted review findings for service records.
+    Return LLM-assisted review findings for service records.
 
     The LLM receives a minimized local context package. If configuration is
     missing or the API call fails, this function returns an informational
@@ -394,11 +467,32 @@ async def build_service_llm_review_findings(
             {
                 "role": "system",
                 "content": (
-                    "You are a conservative data-quality reviewer for coffee-machine DPP service records. "
+                    "You are a conservative data-quality reviewer with practical domain knowledge of household "
+                    "fully automatic coffee machines, also known as bean-to-cup coffee machines, and their "
+                    "service records. "
                     "Use only the provided local context, canonical concepts, and deterministic findings. "
-                    "Do not invent machine-specific facts. Do not normalize values. "
+                    "Use your domain knowledge only for cautious plausibility review; do not invent "
+                    "machine-specific facts beyond the provided service type, selected part, symptoms, "
+                    "diagnosis, concepts, and findings. Do not normalize values. "
+                    "Distinguish evidence sources carefully: core_registry is stable vocabulary evidence, "
+                    "learned_feedback is weaker local review evidence, and candidate_concept is not a controlled concept. "
+                    "Do not present learned_feedback or candidate_concept evidence as core vocabulary truth. "
+                    "If a text entry contains learned_feedback_candidates, explicitly consider them as local "
+                    "review evidence for the proposed concept, but still keep the review cautious. "
+                    "A learned_feedback candidate may support plausibility; it must not be treated as an automatic correction. "
+                    "Only candidate_concepts and learned_feedback_candidates in the context passed the reporting threshold; "
+                    "do not refer to learned feedback unless it appears in learned_feedback_candidates. "
+                    "When learned_feedback_candidates are relevant, explicitly mention learned feedback in natural language "
+                    "and name the proposed concept, for example pump_fault, without using mechanical wording such as "
+                    "'candidate concept id'. "
                     "Return exactly one review object for each service step, not one object per text entry. "
                     "Evaluate the selected service type, selected part, and service text together. "
+                    "Pay special attention when the diagnosis text names a different subsystem or component "
+                    "than the selected part label, even if one symptom still fits the selected part. "
+                    "If such a different subsystem is detected, explicitly state that the selected part, "
+                    "diagnosis, and symptom combination should be reviewed for consistency. "
+                    "When raising a consistency concern, name the relation that is uncertain: "
+                    "part-diagnosis, symptom-diagnosis, part-symptom, service-type-diagnosis, or service-type-part. "
                     "Use verdict ok when no additional attention is needed. Use review or likely_inconsistent only when the service type, "
                     "selected part, and service text relation deserves human attention. "
                     "When service text is unresolved, distinguish likely missing service-concept coverage from "

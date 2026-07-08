@@ -397,7 +397,7 @@ def _free_text_issues(
 
         if result.status == "ambiguous":
             candidate_text = ", ".join(
-                f"{candidate.concept_id} ({candidate.confidence:.2f}, {candidate.match_type})"
+                f"{candidate.concept_id} ({candidate.confidence:.2f}, {candidate.match_type}, {candidate.source})"
                 for candidate in result.candidates[:3]
             )
             issues.append(
@@ -466,6 +466,8 @@ def _free_text_report_entry(result: Any) -> dict[str, Any]:
                 "concept_id": candidate.concept_id,
                 "confidence": candidate.confidence,
                 "method": candidate.match_type,
+                "source": candidate.source,
+                **({"feedback_id": candidate.feedback_id} if candidate.feedback_id else {}),
             }
             for candidate in result.candidates[:3]
         ]
@@ -476,8 +478,10 @@ def _free_text_report_entry(result: Any) -> dict[str, Any]:
                 "concept_id": candidate.concept_id,
                 "confidence": candidate.confidence,
                 "method": candidate.match_type,
+                "source": candidate.source,
+                **({"feedback_id": candidate.feedback_id} if candidate.feedback_id else {}),
             }
-            for candidate in result.closest_candidates[:2]
+            for candidate in result.closest_candidates[:4]
         ]
 
     return entry

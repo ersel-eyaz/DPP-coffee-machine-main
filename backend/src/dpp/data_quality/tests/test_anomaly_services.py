@@ -534,6 +534,27 @@ class AnomalyServiceTests(unittest.TestCase):
         )
         self.assertEqual([], entity.relations)
 
+    def test_negative_service_cost_message_names_negative_value(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "repair-001",
+                    "@type": "dpp:RepairServiceStep",
+                    "diagnose": "pump fault",
+                    "repairedPartId": "part-pump-001",
+                    "costEur": -5.0,
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        anomaly = analyze_harmonization_result(result)
+        finding = next(item for item in anomaly.findings if item.check_id == "service_cost_positive")
+
+        self.assertEqual("error", finding.severity)
+        self.assertEqual("RepairServiceStep.costEur cannot be negative. Current value: -5.", finding.message)
+
     def test_service_diagnosis_part_evidence_mismatch_is_not_flagged_without_relation_registry(self) -> None:
         document = {
             "@context": {"dpp": "https://example.org/dpp#"},

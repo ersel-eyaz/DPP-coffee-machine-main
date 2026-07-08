@@ -4,6 +4,11 @@ This document defines how human feedback may support data-quality harmonization
 without mutating seeded registries or silently changing canonical model
 semantics.
 
+The current prototype does not implement application-level user accounts, role
+management, or authorization enforcement for this workflow. Feedback records
+therefore represent controlled manual review evidence in a prototype setting,
+not verified user identity.
+
 ## Scope
 
 Feedback learning is currently limited to service-text harmonization and
@@ -64,8 +69,10 @@ Rejected feedback must not affect matching or anomaly checks.
 
 - Original input text must always be preserved.
 - A seeded mapping must remain distinguishable from a learned mapping.
-- Feedback must include provenance: action, status, reviewer/source, timestamp,
+- Feedback must include provenance: action, status, review source, timestamp,
   original value, proposed concept, and rationale when available.
+- The prototype should not claim to verify a reviewer identity or role unless a
+  future user/authorization layer is implemented.
 - A single approved feedback record must not silently promote a concept to the
   core registry.
 - Embedding-based matches must not automatically become learned surface forms.
@@ -91,7 +98,7 @@ Recommended fields:
 - `proposed_surface_form`
 - `proposed_service_type`
 - `proposed_part_keywords`
-- `reviewer`
+- `reviewer` or `review_source` as a non-verified prototype metadata field
 - `rationale`
 - `source`
 - `created_at_utc`

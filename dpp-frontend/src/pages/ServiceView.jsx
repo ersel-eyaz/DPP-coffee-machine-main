@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Badge,
@@ -49,6 +49,10 @@ export default function ServiceView() {
   const [qualityChecking, setQualityChecking] = useState(false);
   const [qualityResult, setQualityResult] = useState(null);
   const [qualityErr, setQualityErr] = useState(null);
+  const [serviceConcepts, setServiceConcepts] = useState(null);
+  const [feedbackConceptByEntry, setFeedbackConceptByEntry] = useState({});
+  const [appliedFeedbackByEntry, setAppliedFeedbackByEntry] = useState({});
+  const appliedFeedbackRef = useRef({});
 
   useEffect(() => {
     let on = true;
@@ -110,7 +114,25 @@ export default function ServiceView() {
   useEffect(() => {
     setQualityResult(null);
     setQualityErr(null);
+    setAppliedFeedbackByEntry({});
+    appliedFeedbackRef.current = {};
   }, [stepType, selPartId, costEur, diagnose, symptomsStr, newStaticId, newSerial, newBatch]);
+
+  useEffect(() => {
+    if (!showReg || serviceConcepts) return;
+    let on = true;
+    (async () => {
+      try {
+        const payload = await api.listDataQualityServiceConcepts();
+        if (on) setServiceConcepts(payload?.concepts_by_kind || {});
+      } catch {
+        if (on) setServiceConcepts({});
+      }
+    })();
+    return () => {
+      on = false;
+    };
+  }, [showReg, serviceConcepts]);
 
   if (loading)
     return (
@@ -354,7 +376,7 @@ export default function ServiceView() {
   const cleanServiceTextFromQuality = (quality) => {
     const node = Array.isArray(quality?.data?.["@graph"]) ? quality.data["@graph"][0] : null;
     const cleanSymptoms = node?.["dpp:observedSymptoms"] ?? node?.observedSymptoms;
-    const symptomList = Array.isArray(cleanSymptoms)
+    const baseSymptomList = Array.isArray(cleanSymptoms)
       ? cleanSymptoms
       : typeof cleanSymptoms === "string"
         ? [cleanSymptoms]
@@ -362,11 +384,93 @@ export default function ServiceView() {
             .split(/[;,]+/)
             .map((s) => s.trim())
             .filter(Boolean);
+    const appliedFeedback = Object.values(appliedFeedbackByEntry);
+    const appliedDiagnose = appliedFeedback.find((item) => item?.field_name === "diagnose");
+    const appliedSymptoms = appliedFeedback.filter((item) => item?.field_name === "observedSymptoms");
+    const symptomList = baseSymptomList.map((symptom) => {
+      const applied = appliedSymptoms.find((item) => item.original_value === symptom);
+      return applied?.concept_id || symptom;
+    });
 
     return {
-      diagnose: node?.["dpp:diagnose"] ?? node?.diagnose ?? diagnose ?? "",
+      diagnose: appliedDiagnose?.concept_id || node?.["dpp:diagnose"] || node?.diagnose || diagnose || "",
       observedSymptoms: symptomList,
     };
+  };
+
+  const serviceConceptOptionsForEntry = (entry) => {
+    const kind = entry?.field_name === "diagnose" ? "diagnosis" : "symptom";
+    return Array.isArray(serviceConcepts?.[kind]) ? serviceConcepts[kind] : [];
+  };
+
+  const feedbackEntryKey = (entry, index) =>
+    `${entry.entity_id || "entity"}:${entry.field_name || "field"}:${index}:${entry.original_value || ""}`;
+
+  const closeServiceRegister = () => {
+    setShowReg(false);
+    setAppliedFeedbackByEntry({});
+    appliedFeedbackRef.current = {};
+    setFeedbackConceptByEntry({});
+    setQualityResult(null);
+    setQualityErr(null);
+  };
+
+  const stageLearnedFeedbackForRecord = (entry, index, conceptId, shouldStoreFeedback = true) => {
+    const key = feedbackEntryKey(entry, index);
+    const options = serviceConceptOptionsForEntry(entry);
+    const selectedConcept = conceptId || feedbackConceptByEntry[key] || options[0]?.concept_id || "";
+    if (!selectedConcept) {
+      setToast({ show: true, msg: "No service concept available for this feedback entry.", variant: "warning" });
+      return;
+    }
+
+    const preparedFeedback = {
+      entity_type: entry.entity_type || stepType,
+      field_name: entry.field_name,
+      field_path: `${entry.entity_type || stepType}.${entry.field_name}`,
+      original_value: entry.original_value,
+      concept_id: selectedConcept,
+      should_store_feedback: shouldStoreFeedback,
+    };
+    appliedFeedbackRef.current = {
+      ...appliedFeedbackRef.current,
+      [key]: preparedFeedback,
+    };
+    setAppliedFeedbackByEntry((current) => ({
+      ...current,
+      [key]: preparedFeedback,
+    }));
+    setToast({
+      show: true,
+      msg: shouldStoreFeedback
+        ? "Feedback prepared. It will be stored when this service step is saved."
+        : "Learned suggestion prepared for this record.",
+      variant: "success",
+    });
+  };
+
+  const storePreparedFeedbackAfterSave = async () => {
+    const pendingFeedback = Object.keys(appliedFeedbackRef.current).length
+      ? appliedFeedbackRef.current
+      : appliedFeedbackByEntry;
+    const entriesToStore = Object.values(pendingFeedback).filter((entry) => entry?.should_store_feedback);
+    if (entriesToStore.length === 0) return null;
+
+    try {
+      await Promise.all(entriesToStore.map((entry) =>
+        api.createDataQualityServiceTextFeedback({
+          entity_type: entry.entity_type || stepType,
+          field_path: entry.field_path || `${entry.entity_type || stepType}.${entry.field_name}`,
+          original_value: entry.original_value,
+          concept_id: entry.concept_id,
+          proposed_surface_form: entry.original_value,
+          rationale: "Added through the service quality feedback UI after saving the service record.",
+        })
+      ));
+      return { ok: true, count: entriesToStore.length };
+    } catch (e) {
+      return { ok: false, error: e?.message || String(e) };
+    }
   };
 
   const postStep = async () => {
@@ -496,9 +600,21 @@ export default function ServiceView() {
       } else {
         throw new Error("Unsupported step type");
       }
+      const feedbackStorage = await storePreparedFeedbackAfterSave();
       await refreshAll();
       setShowReg(false);
-      setToast({ show: true, msg: "Service step registered.", variant: "success" });
+      setAppliedFeedbackByEntry({});
+      appliedFeedbackRef.current = {};
+      setFeedbackConceptByEntry({});
+      if (feedbackStorage && !feedbackStorage.ok) {
+        setToast({
+          show: true,
+          msg: `Service step registered, but learned feedback could not be stored: ${feedbackStorage.error}`,
+          variant: "warning",
+        });
+      } else {
+        setToast({ show: true, msg: "Service step registered.", variant: "success" });
+      }
     } catch (e) {
       setToast({ show: true, msg: `Failed to register step: ${e?.message || e}`, variant: "danger" });
     } finally {
@@ -534,6 +650,12 @@ export default function ServiceView() {
         .diag-meta { display:inline-flex; align-items:center; gap:.5rem; flex-wrap: wrap; }
         .diag-prog { min-width: 120px; }
         .quality-llm-review { border-left: 3px solid #6f42c1; background: #f7f3ff; padding: .5rem .65rem; }
+        .quality-learned-feedback { border-left: 3px solid #0d6efd; background: #f4f8ff; padding: .45rem .6rem; margin-top: .35rem; }
+        .quality-feedback-applied { border-left: 3px solid #198754; background: #f3fbf6; padding: .45rem .6rem; margin-top: .35rem; }
+        .quality-feedback-action { border-left: 3px solid #adb5bd; background: #f8f9fa; padding: .45rem .6rem; margin-top: .35rem; }
+        .quality-candidate-meta { color: #6c757d; }
+        .quality-caution-note { display:flex; align-items:flex-start; gap:.35rem; font-size:.74rem; line-height:1.25; color:#6c757d; margin-top:.3rem; }
+        .quality-caution-mark { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:.95rem; height:.95rem; border-radius:50%; border:1px solid #adb5bd; font-size:.68rem; font-weight:700; color:#6c757d; margin-top:.02rem; }
         .history-original-tip { display: inline-flex; flex: 0 0 auto; vertical-align: -0.1em; line-height: 1; margin-left: .1rem !important; }
       `}</style>
       <Row className="align-items-center mb-2">
@@ -975,7 +1097,7 @@ export default function ServiceView() {
         </Toast>
       </ToastContainer>
 
-      <Modal show={showReg} onHide={() => setShowReg(false)} size="lg">
+      <Modal show={showReg} onHide={closeServiceRegister} size="lg">
         <Modal.Header closeButton>
           <Modal.Title>Register service</Modal.Title>
         </Modal.Header>
@@ -1168,13 +1290,30 @@ export default function ServiceView() {
                                   <Badge bg={entry.status === "normalized" ? "success" : "warning"}>
                                     {entry.status}
                                   </Badge>
-                                  <span className="small">{entry.field_name}</span>
+                                  <span className="small">{entry.field_name}:</span>
                                   <span className="small text-muted wrap">{entry.original_value}</span>
                                   {entry.normalized_value && (
                                     <span className="small fw-semibold">→ {entry.normalized_value}</span>
                                   )}
                                 </div>
-                                {entry.status !== "normalized" && renderTextCandidateTrace(entry)}
+                                {entry.status !== "normalized" && renderTextCandidateTrace(entry, {
+                                  onUseLearnedCandidate: (candidate) =>
+                                    stageLearnedFeedbackForRecord(entry, index, candidate.concept_id, true),
+                                  showLearnedAction: !appliedFeedbackByEntry[feedbackEntryKey(entry, index)],
+                                })}
+                                {entry.status !== "normalized" && renderAppliedFeedbackForRecord(
+                                  appliedFeedbackByEntry[feedbackEntryKey(entry, index)]
+                                )}
+                                {entry.status !== "normalized" && !appliedFeedbackByEntry[feedbackEntryKey(entry, index)] && renderLearnedFeedbackAction(entry, index, {
+                                  concepts: serviceConceptOptionsForEntry(entry),
+                                  selectedConcept: feedbackConceptByEntry[feedbackEntryKey(entry, index)],
+                                  onSelect: (conceptId) =>
+                                    setFeedbackConceptByEntry((current) => ({
+                                      ...current,
+                                      [feedbackEntryKey(entry, index)]: conceptId,
+                                    })),
+                                  onSubmit: () => stageLearnedFeedbackForRecord(entry, index),
+                                })}
                               </ListGroup.Item>
                             ))}
                           </ListGroup>
@@ -1213,6 +1352,10 @@ export default function ServiceView() {
                               </ListGroup.Item>
                             ))}
                           </ListGroup>
+                          <div className="quality-caution-note">
+                            <span className="quality-caution-mark">!</span>
+                            <span>Advisory only; verify with domain knowledge.</span>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1223,7 +1366,7 @@ export default function ServiceView() {
           </Row>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowReg(false)} disabled={posting}>
+          <Button variant="secondary" onClick={closeServiceRegister} disabled={posting}>
             Cancel
           </Button>
           <Button variant="primary" onClick={postStep} disabled={posting || qualityChecking || !selPartId || !stepType}>
@@ -1274,43 +1417,178 @@ function safeNum(n) {
   return Number.isFinite(v) ? v : "—";
 }
 
-function renderTextCandidateTrace(entry) {
+function renderTextCandidateTrace(entry, { onUseLearnedCandidate, showLearnedAction = true } = {}) {
+  const learnedCandidates = Array.isArray(entry.candidates)
+    ? entry.candidates.filter((candidate) => candidate?.source === "learned_feedback")
+    : [];
+  const visibleLearnedCandidates = showLearnedAction ? learnedCandidates : [];
   const candidates = Array.isArray(entry.closest_candidates) && entry.closest_candidates.length
     ? entry.closest_candidates
     : Array.isArray(entry.candidates)
       ? entry.candidates
       : [];
-  if (!candidates.length) return null;
+  if (!candidates.length && !visibleLearnedCandidates.length) return null;
 
   const thresholds = entry.thresholds || {};
-  const rows = candidates.slice(0, 2).map((candidate) => {
-    const method = candidate.match_type || candidate.method || "candidate";
-    const score = formatScore(candidate.confidence);
-    const reportingThreshold = method === "semantic"
-      ? thresholds.candidate_semantic_reporting_threshold
-      : thresholds.candidate_fuzzy_reporting_threshold;
-    const autoThreshold = method === "semantic"
-      ? thresholds.automatic_semantic_threshold
-      : thresholds.automatic_fuzzy_threshold;
-    return {
-      method,
-      conceptId: candidate.concept_id,
-      score,
-      reportingThreshold: formatScore(reportingThreshold),
-      autoThreshold: formatScore(autoThreshold),
-    };
-  });
+  const rows = candidates
+    .filter((candidate) => candidate?.source !== "learned_feedback")
+    .slice(0, 3)
+    .map((candidate) => {
+      const method = candidate.match_type || candidate.method || "candidate";
+      const score = formatScore(candidate.confidence);
+      const reportingThreshold = method === "semantic"
+        ? thresholds.candidate_semantic_reporting_threshold
+        : thresholds.candidate_fuzzy_reporting_threshold;
+      const autoThreshold = method === "semantic"
+        ? thresholds.automatic_semantic_threshold
+        : thresholds.automatic_fuzzy_threshold;
+      return {
+        method,
+        conceptId: candidate.concept_id,
+        score,
+        thresholdText: coreCandidateThresholdText(candidate, reportingThreshold, autoThreshold),
+      };
+    });
 
   return (
-    <div className="small text-muted mt-1 wrap">
-      <div>Closest candidates below auto-match:</div>
-      <ul className="mb-0 ps-3">
-        {rows.map((row) => (
-          <li key={`${row.method}-${row.conceptId}`}>
-            {row.method}: {row.conceptId} {row.score} (candidate &gt;= {row.reportingThreshold}, auto &gt;= {row.autoThreshold})
-          </li>
-        ))}
-      </ul>
+    <div className="small mt-1 wrap">
+      {visibleLearnedCandidates.length > 0 && (
+        <div className="quality-learned-feedback">
+          <div className="fw-semibold">Learned feedback suggestion</div>
+          <ul className="mb-0 ps-3">
+            {visibleLearnedCandidates.slice(0, 2).map((candidate) => (
+              <li key={`${candidate.feedback_id || candidate.concept_id}-${candidate.method || candidate.match_type}`}>
+                <div>
+                  <span className="fw-semibold">{candidate.concept_id}</span>
+                  <span className="quality-candidate-meta"> ({learnedFeedbackMatchLabel(candidate)})</span>
+                </div>
+                <div className="quality-candidate-meta">
+                  {learnedFeedbackThresholdText(candidate, thresholds)}
+                </div>
+                {showLearnedAction && typeof onUseLearnedCandidate === "function" && (
+                  <Button
+                    size="sm"
+                    variant="outline-primary"
+                    className="mt-1 py-0"
+                    onClick={() => onUseLearnedCandidate(candidate)}
+                  >
+                    Use for this record
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {rows.length > 0 && (
+        <div className="text-muted mt-1">
+          <div>Core candidate trace:</div>
+          <ul className="mb-0 ps-3">
+            {rows.map((row) => (
+              <li key={`${row.method}-${row.conceptId}`}>
+                {row.method}: {row.conceptId} {row.score} {row.thresholdText}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function coreCandidateThresholdText(candidate, candidateThreshold, autoThreshold) {
+  const score = Number(candidate?.confidence);
+  const candidateScore = Number(candidateThreshold);
+  const autoScore = Number(autoThreshold);
+  const candidateText = formatScore(candidateThreshold);
+  const autoText = formatScore(autoThreshold);
+
+  if (!Number.isFinite(score)) {
+    return `(candidate >= ${candidateText}, auto >= ${autoText})`;
+  }
+  if (Number.isFinite(autoScore) && score >= autoScore) {
+    return `(would auto-match; auto >= ${autoText})`;
+  }
+  if (Number.isFinite(candidateScore) && score >= candidateScore) {
+    return `(candidate only; auto >= ${autoText})`;
+  }
+  return `(below candidate; candidate >= ${candidateText}, auto >= ${autoText})`;
+}
+
+function learnedFeedbackMatchLabel(candidate) {
+  const method = candidate?.method || candidate?.match_type || "";
+  if (method.includes("exact")) return "exact learned feedback match";
+  if (method.includes("fuzzy")) return "similar learned feedback match";
+  if (method.includes("semantic")) return "semantic learned feedback match";
+  return "learned feedback match";
+}
+
+function learnedFeedbackThresholdText(candidate, thresholds = {}) {
+  const method = candidate?.method || candidate?.match_type || "";
+  const score = formatScore(candidate?.confidence);
+  if (method.includes("exact")) {
+    return `score ${score}; approval required`;
+  }
+
+  const candidateThreshold = method.includes("semantic")
+    ? thresholds.candidate_semantic_reporting_threshold
+    : thresholds.candidate_fuzzy_reporting_threshold;
+  return `score ${score} (candidate >= ${formatScore(candidateThreshold)}; approval required)`;
+}
+
+function renderLearnedFeedbackAction(entry, index, { concepts, selectedConcept, onSelect, onSubmit }) {
+  if (!Array.isArray(concepts) || concepts.length === 0) return null;
+  const alreadyHasLearnedCandidate = Array.isArray(entry.candidates)
+    && entry.candidates.some((candidate) => candidate?.source === "learned_feedback");
+
+  const value = selectedConcept || "";
+
+  return (
+    <div className="quality-feedback-action">
+      <div className="small fw-semibold mb-1">
+        {alreadyHasLearnedCandidate ? "Use another service concept for this record" : "Use as learned feedback for this record"}
+      </div>
+      <div className="d-flex flex-column flex-md-row gap-2">
+        <Form.Select
+          size="sm"
+          value={value}
+          onChange={(event) => onSelect(event.target.value)}
+          aria-label={`Select service concept for ${entry.field_name || "service text"} feedback ${index + 1}`}
+        >
+          <option value="">Select concept…</option>
+          {concepts.map((concept) => (
+            <option key={concept.concept_id} value={concept.concept_id}>
+              {concept.concept_id} · {concept.label}
+            </option>
+          ))}
+        </Form.Select>
+        <Button size="sm" variant="outline-primary" onClick={onSubmit} disabled={!value}>
+          Use
+        </Button>
+      </div>
+      <div className="small text-muted mt-1">
+        Prepares this text for the current record. New feedback is stored only after the service record is saved.
+      </div>
+      <div className="quality-caution-note">
+        <span className="quality-caution-mark">!</span>
+        <span>Use only when the mapping is reliable, because saved feedback can influence future suggestions.</span>
+      </div>
+    </div>
+  );
+}
+
+function renderAppliedFeedbackForRecord(appliedFeedback) {
+  if (!appliedFeedback?.concept_id) return null;
+
+  return (
+    <div className="quality-feedback-applied">
+      <div className="small fw-semibold">Learned feedback prepared for this record</div>
+      <div className="small">
+        This entry will be saved as <span className="fw-semibold">{appliedFeedback.concept_id}</span>.
+      </div>
+      <div className="small text-muted">
+        Original input remains available in the service history details. New learned feedback is stored only after Save.
+      </div>
     </div>
   );
 }

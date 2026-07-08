@@ -11,9 +11,16 @@ from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.schemas import AnomalyResult
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
 from dpp.data_quality.anomaly.llm_review import build_service_llm_review_findings
+from dpp.data_quality.harmonization.feedback import (
+    append_feedback_record,
+    approve_feedback_proposal,
+    create_feedback_proposal,
+    learned_mapping_from_feedback,
+)
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.parser import ParseError, parse_jsonld_document
 from dpp.data_quality.harmonization.services import harmonize_document
+from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID, TEXT_CONCEPTS_BY_KIND
 from dpp.data_quality.scopes import SUPPORTED_SCOPES
 
 
@@ -32,6 +39,21 @@ class DataQualityRunRequest(BaseModel):
     review_context: Dict[str, Any] = Field(
         default_factory=dict,
         description="Optional caller-provided context for review-only checks, e.g. selected service part label.",
+    )
+
+
+class ServiceTextFeedbackRequest(BaseModel):
+    entity_type: str = Field(..., description="Service-step entity type, e.g. RepairServiceStep.")
+    field_path: str = Field(..., description="Canonical service-text field path, e.g. RepairServiceStep.diagnose.")
+    original_value: str = Field(..., description="Original service text to store as local learned evidence.")
+    concept_id: str = Field(..., description="Existing service concept id selected by the reviewer.")
+    proposed_surface_form: str | None = Field(
+        None,
+        description="Optional surface form. Defaults to original_value.",
+    )
+    rationale: str | None = Field(
+        None,
+        description="Optional non-verified prototype review rationale.",
     )
 
 
@@ -78,6 +100,14 @@ EXAMPLE_DOCUMENTS: Dict[str, Dict[str, str]] = {
 
 def _examples_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "data_quality" / "examples"
+
+
+def _service_text_kind_for_field_path(field_path: str) -> str | None:
+    if field_path.endswith(".diagnose"):
+        return "diagnosis"
+    if field_path.endswith(".observedSymptoms"):
+        return "symptom"
+    return None
 
 
 def _detect_scope(document: Dict[str, Any]) -> str:
@@ -153,6 +183,76 @@ async def get_data_quality_example(example_name: str) -> Dict[str, Any]:
         "label": item["label"],
         "scope": item["scope"],
         "document": document,
+    }
+
+
+@router.get("/service-concepts")
+async def list_service_concepts() -> Dict[str, Any]:
+    """Return service concepts that can be selected for prototype feedback."""
+    concepts_by_kind: Dict[str, list[Dict[str, Any]]] = {}
+    for kind, concepts in TEXT_CONCEPTS_BY_KIND.items():
+        concepts_by_kind[kind] = [
+            {
+                "concept_id": concept.concept_id,
+                "kind": concept.kind,
+                "label": concept.label,
+                "description": concept.description,
+                "inventory_status": concept.inventory_status,
+            }
+            for concept in concepts
+        ]
+    return {"concepts_by_kind": concepts_by_kind}
+
+
+@router.post("/feedback/service-text")
+async def create_service_text_feedback(request: ServiceTextFeedbackRequest) -> Dict[str, Any]:
+    """Store approved local learned feedback for one service free-text value."""
+    original_value = request.original_value.strip()
+    if not original_value:
+        raise HTTPException(status_code=400, detail="Feedback original_value must not be empty.")
+
+    field_kind = _service_text_kind_for_field_path(request.field_path)
+    if field_kind is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Feedback is currently supported only for diagnose and observedSymptoms service text fields.",
+        )
+
+    concept = TEXT_CONCEPTS_BY_ID.get(request.concept_id)
+    if concept is None:
+        raise HTTPException(status_code=400, detail=f"Unknown service concept id: {request.concept_id}")
+    if concept.kind != field_kind:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Concept {request.concept_id!r} has kind {concept.kind!r}, "
+                f"but field {request.field_path!r} expects {field_kind!r}."
+            ),
+        )
+
+    proposal = create_feedback_proposal(
+        action="accept_mapping",
+        scope_name="service",
+        entity_type=request.entity_type,
+        field_path=request.field_path,
+        original_value=original_value,
+        concept_id=concept.concept_id,
+        proposed_surface_form=(request.proposed_surface_form or original_value).strip(),
+        reviewer="prototype_review",
+        rationale=request.rationale or "Added through the service quality feedback UI.",
+    )
+    approved = approve_feedback_proposal(
+        proposal,
+        reviewer="prototype_review",
+        rationale=request.rationale or "Added through the service quality feedback UI.",
+    )
+    stored = append_feedback_record(approved)
+    mapping = learned_mapping_from_feedback(stored)
+
+    return {
+        "status": "stored",
+        "feedback": stored.as_dict(),
+        "learned_mapping": mapping.as_dict() if mapping is not None else None,
     }
 
 

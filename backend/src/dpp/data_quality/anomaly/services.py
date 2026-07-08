@@ -77,6 +77,17 @@ def _is_out_of_range(value: float, rule: NumericRangeRule) -> bool:
     return False
 
 
+def _numeric_range_message(rule: NumericRangeRule, value: float) -> str:
+    """Return a specific, user-facing message for a numeric range violation."""
+    if value < 0 and rule.min_value is not None and rule.min_value >= 0:
+        return f"{rule.field_path} cannot be negative. Current value: {value:g}."
+
+    if rule.min_exclusive and rule.min_value is not None and value <= rule.min_value:
+        return f"{rule.field_path} must be greater than {rule.min_value:g}. Current value: {value:g}."
+
+    return f"{rule.field_path} value {value:g} is outside the expected plausibility range."
+
+
 def _apply_numeric_range_rules(
     result: HarmonizationResult,
     rules: tuple[NumericRangeRule, ...],
@@ -98,7 +109,7 @@ def _apply_numeric_range_rules(
                     check_id=rule.check_id,
                     category="range",
                     severity=rule.severity,  # type: ignore[arg-type]
-                    message=f"{rule.field_path} value {value:g} is outside the expected plausibility range.",
+                    message=_numeric_range_message(rule, value),
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
                     field_path=rule.field_path,

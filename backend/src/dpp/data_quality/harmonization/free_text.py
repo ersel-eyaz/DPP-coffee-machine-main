@@ -9,8 +9,9 @@ aggregation, reporting, and prototype analytics.
 The matching strategy is intentionally conservative:
 1. canonical id / label / example exact match
 2. clear lexical fuzzy fallback for close spelling variants
-3. optional semantic embedding fallback for paraphrases
-4. ambiguous or unresolved result
+3. review-only learned-feedback exact, fuzzy, and semantic candidates
+4. optional semantic embedding fallback for core-registry paraphrases
+5. ambiguous or unresolved result
 
 The semantic fallback is lazy and optional. The module can still be imported and
 lexical matching can still run without sentence-transformers installed.
@@ -25,6 +26,10 @@ from math import sqrt
 from typing import Any, Literal
 
 
+from dpp.data_quality.harmonization.feedback import (
+    LearnedServiceTextMapping,
+    load_learned_service_text_mappings,
+)
 from dpp.data_quality.harmonization.service_concepts import (
     DIAGNOSIS_CONCEPTS,
     SYMPTOM_CONCEPTS,
@@ -59,6 +64,8 @@ class TextNormalizationCandidate:
     label: str
     confidence: float
     match_type: str
+    source: str = "core_registry"
+    feedback_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +108,8 @@ class TextNormalizationResult:
                     "label": candidate.label,
                     "confidence": candidate.confidence,
                     "match_type": candidate.match_type,
+                    "source": candidate.source,
+                    **({"feedback_id": candidate.feedback_id} if candidate.feedback_id else {}),
                 }
                 for candidate in self.candidates
             ]
@@ -111,6 +120,8 @@ class TextNormalizationResult:
                     "label": candidate.label,
                     "confidence": candidate.confidence,
                     "match_type": candidate.match_type,
+                    "source": candidate.source,
+                    **({"feedback_id": candidate.feedback_id} if candidate.feedback_id else {}),
                 }
                 for candidate in self.closest_candidates
             ]
@@ -184,6 +195,67 @@ def find_text_value_candidates(
     return sorted(candidates_by_concept.values(), key=lambda item: item.confidence, reverse=True)
 
 
+def find_learned_text_value_candidates(
+    kind: TextConceptKind,
+    text: Any,
+    min_confidence: float = AMBIGUOUS_TEXT_FUZZY_THRESHOLD,
+) -> list[TextNormalizationCandidate]:
+    """Find review-only candidates from approved learned feedback evidence."""
+    if not isinstance(text, str):
+        return []
+
+    key = _normalize_text_key(text)
+    if not key:
+        return []
+
+    candidates_by_feedback: dict[str, TextNormalizationCandidate] = {}
+    concepts_by_id = {item.concept_id: item for item in TEXT_CONCEPTS_BY_KIND[kind]}
+
+    for mapping in load_learned_service_text_mappings():
+        if mapping.kind != kind:
+            continue
+
+        target_concept = concepts_by_id.get(mapping.concept_id)
+        if target_concept is None:
+            continue
+
+        phrase_key = _normalize_text_key(mapping.surface_form)
+        if not phrase_key:
+            continue
+
+        if key == phrase_key:
+            return [
+                TextNormalizationCandidate(
+                    original_text=text,
+                    concept_id=mapping.concept_id,
+                    label=target_concept.label,
+                    confidence=1.0,
+                    match_type="learned_feedback_exact",
+                    source="learned_feedback",
+                    feedback_id=mapping.feedback_id,
+                )
+            ]
+
+        score = _similarity(key, phrase_key)
+        if score < min_confidence:
+            continue
+
+        candidate = TextNormalizationCandidate(
+            original_text=text,
+            concept_id=mapping.concept_id,
+            label=target_concept.label,
+            confidence=score,
+            match_type="learned_feedback_fuzzy",
+            source="learned_feedback",
+            feedback_id=mapping.feedback_id,
+        )
+        current = candidates_by_feedback.get(mapping.feedback_id)
+        if current is None or score > current.confidence:
+            candidates_by_feedback[mapping.feedback_id] = candidate
+
+    return sorted(candidates_by_feedback.values(), key=lambda item: item.confidence, reverse=True)
+
+
 @lru_cache(maxsize=1)
 def _embedding_model() -> Any:
     """Load the optional sentence-transformers model lazily."""
@@ -220,6 +292,16 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     if left_norm == 0.0 or right_norm == 0.0:
         return 0.0
     return dot_product / (left_norm * right_norm)
+
+
+def _learned_mapping_embedding_text(mapping: LearnedServiceTextMapping) -> str:
+    """Return the text profile used for review-only learned-feedback semantic matching."""
+    parts = [mapping.surface_form]
+    if mapping.original_value != mapping.surface_form:
+        parts.append(mapping.original_value)
+    if mapping.rationale:
+        parts.append(mapping.rationale)
+    return ". ".join(part for part in parts if part)
 
 
 @lru_cache(maxsize=8)
@@ -265,6 +347,54 @@ def find_text_semantic_candidates(
                 label=label,
                 confidence=score,
                 match_type="semantic",
+            )
+        )
+
+    return sorted(candidates, key=lambda item: item.confidence, reverse=True)
+
+
+def find_learned_text_semantic_candidates(
+    kind: TextConceptKind,
+    text: Any,
+    min_confidence: float = AMBIGUOUS_TEXT_SEMANTIC_THRESHOLD,
+) -> list[TextNormalizationCandidate]:
+    """Find review-only semantic candidates from approved learned feedback evidence."""
+    if not isinstance(text, str):
+        return []
+
+    query = " ".join(text.strip().split())
+    if not query:
+        return []
+
+    mappings = [mapping for mapping in load_learned_service_text_mappings() if mapping.kind == kind]
+    if not mappings:
+        return []
+
+    concepts_by_id = {item.concept_id: item for item in TEXT_CONCEPTS_BY_KIND[kind]}
+    model = _embedding_model()
+    query_vector = _as_vector(model.encode(query, normalize_embeddings=True))
+    mapping_texts = [_learned_mapping_embedding_text(mapping) for mapping in mappings]
+    mapping_embeddings = model.encode(mapping_texts, normalize_embeddings=True)
+
+    candidates: list[TextNormalizationCandidate] = []
+    for mapping, embedding in zip(mappings, mapping_embeddings):
+        target_concept = concepts_by_id.get(mapping.concept_id)
+        if target_concept is None:
+            continue
+
+        score = _cosine_similarity(query_vector, _as_vector(embedding))
+        if score < min_confidence:
+            continue
+
+        candidates.append(
+            TextNormalizationCandidate(
+                original_text=text,
+                concept_id=mapping.concept_id,
+                label=target_concept.label,
+                confidence=score,
+                match_type="learned_feedback_semantic",
+                source="learned_feedback",
+                feedback_id=mapping.feedback_id,
             )
         )
 
@@ -318,6 +448,17 @@ def _closest_diagnostic_candidates(
     if fuzzy_candidates:
         closest.append(fuzzy_candidates[0])
 
+    learned_candidates = find_learned_text_value_candidates(kind, text, min_confidence=0.0)
+    if learned_candidates:
+        closest.append(learned_candidates[0])
+    elif enable_semantic:
+        try:
+            learned_semantic_candidates = find_learned_text_semantic_candidates(kind, text, min_confidence=0.0)
+        except TextNormalizationError:
+            learned_semantic_candidates = []
+        if learned_semantic_candidates:
+            closest.append(learned_semantic_candidates[0])
+
     if enable_semantic:
         try:
             semantic_candidates = find_text_semantic_candidates(kind, text, min_confidence=0.0)
@@ -361,11 +502,7 @@ def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: b
             status="unresolved",
         )
 
-    try:
-        candidate = resolve_text_value(kind, stripped, enable_semantic=enable_semantic)
-    except TextNormalizationError:
-        # Keep the workflow robust if optional ML dependencies are unavailable.
-        candidate = resolve_text_value(kind, stripped, enable_semantic=False)
+    candidate = resolve_text_value(kind, stripped, enable_semantic=False)
 
     if candidate is not None:
         return TextNormalizationResult(
@@ -378,7 +515,38 @@ def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: b
         )
 
     candidates = find_text_value_candidates(kind, stripped)
+    learned_candidates = find_learned_text_value_candidates(kind, stripped)
+    if enable_semantic and not learned_candidates:
+        try:
+            learned_semantic_candidates = find_learned_text_semantic_candidates(kind, stripped)
+        except TextNormalizationError:
+            learned_semantic_candidates = []
+        if learned_semantic_candidates:
+            learned_candidates = sorted(
+                [*learned_candidates, *learned_semantic_candidates[:3]],
+                key=lambda item: item.confidence,
+                reverse=True,
+            )
+    if learned_candidates:
+        candidates = sorted(
+            [*candidates, *learned_candidates[:3]],
+            key=lambda item: item.confidence,
+            reverse=True,
+        )
     if not candidates and enable_semantic:
+        try:
+            candidate = resolve_text_value(kind, stripped, enable_semantic=True)
+        except TextNormalizationError:
+            candidate = None
+        if candidate is not None:
+            return TextNormalizationResult(
+                original_text=stripped,
+                normalized_concept=candidate.concept_id,
+                normalized_label=candidate.label,
+                confidence=candidate.confidence,
+                method=candidate.match_type,
+                status="normalized",
+            )
         try:
             candidates = find_text_semantic_candidates(kind, stripped)
         except TextNormalizationError:

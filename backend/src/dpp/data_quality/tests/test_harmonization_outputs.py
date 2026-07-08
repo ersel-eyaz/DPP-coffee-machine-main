@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -17,10 +19,13 @@ from dpp.data_quality.harmonization.normalizers import (
 )
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.services import harmonize_document
+from dpp.data_quality.harmonization import free_text as free_text_module
 from dpp.data_quality.harmonization.free_text import normalize_text_value
 from dpp.data_quality.harmonization.feedback import (
+    append_feedback_record,
     approve_feedback_proposal,
     create_feedback_proposal,
+    load_learned_service_text_mappings,
 )
 
 
@@ -177,6 +182,198 @@ class FeedbackProposalTests(unittest.TestCase):
         self.assertEqual("approved", approved.status)
         self.assertEqual("pump_fault", approved.as_dict()["concept_id"])
         self.assertEqual("pump sounds dead", approved.as_dict()["proposed_surface_form"])
+
+    def test_approved_feedback_loads_as_learned_service_text_mapping(self) -> None:
+        proposal = create_feedback_proposal(
+            action="accept_mapping",
+            scope_name="service",
+            entity_type="RepairServiceStep",
+            field_path="RepairServiceStep.diagnose",
+            original_value="hydraulic humming cycle",
+            concept_id="pump_fault",
+            proposed_surface_form="hydraulic humming cycle",
+            reviewer="prototype_review",
+        )
+        approved = approve_feedback_proposal(
+            proposal,
+            reviewer="prototype_review",
+            rationale="Controlled prototype review evidence.",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            feedback_path = Path(tmpdir) / "learned_feedback.json"
+            feedback_path.write_text(
+                json.dumps({"feedback": [approved.as_dict()]}),
+                encoding="utf-8",
+            )
+
+            mappings = load_learned_service_text_mappings(feedback_path)
+
+        self.assertEqual(1, len(mappings))
+        self.assertEqual("diagnosis", mappings[0].kind)
+        self.assertEqual("pump_fault", mappings[0].concept_id)
+        self.assertEqual("hydraulic humming cycle", mappings[0].surface_form)
+
+    def test_learned_feedback_exact_match_is_reported_as_review_candidate_not_core_normalization(self) -> None:
+        proposal = create_feedback_proposal(
+            action="accept_mapping",
+            scope_name="service",
+            entity_type="RepairServiceStep",
+            field_path="RepairServiceStep.diagnose",
+            original_value="hydraulic humming cycle",
+            concept_id="pump_fault",
+            proposed_surface_form="hydraulic humming cycle",
+            reviewer="prototype_review",
+        )
+        approved = approve_feedback_proposal(proposal, reviewer="prototype_review")
+
+        old_path = os.environ.get("DPP_DQ_LEARNED_FEEDBACK_PATH")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            feedback_path = Path(tmpdir) / "learned_feedback.json"
+            feedback_path.write_text(
+                json.dumps({"feedback": [approved.as_dict()]}),
+                encoding="utf-8",
+            )
+            os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = str(feedback_path)
+            try:
+                result = normalize_text_value("diagnosis", "hydraulic humming cycle", enable_semantic=False)
+            finally:
+                if old_path is None:
+                    os.environ.pop("DPP_DQ_LEARNED_FEEDBACK_PATH", None)
+                else:
+                    os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = old_path
+
+        self.assertEqual("ambiguous", result.status)
+        self.assertIsNone(result.normalized_concept)
+        self.assertEqual("pump_fault", result.candidates[0].concept_id)
+        self.assertEqual("learned_feedback_exact", result.candidates[0].match_type)
+        self.assertEqual("learned_feedback", result.candidates[0].source)
+        self.assertEqual(approved.proposal_id, result.candidates[0].feedback_id)
+
+    def test_learned_feedback_semantic_match_is_review_only_and_separate_from_core_registry(self) -> None:
+        class FakeEmbeddingModel:
+            def encode(self, texts, normalize_embeddings=True):  # noqa: ANN001, ARG002
+                if isinstance(texts, str):
+                    return self._vector(texts)
+                return [self._vector(text) for text in texts]
+
+            def _vector(self, text: str) -> list[float]:
+                key = text.lower()
+                if "hydraulic" in key or "humming" in key:
+                    return [1.0, 0.0]
+                return [0.0, 1.0]
+
+        proposal = create_feedback_proposal(
+            action="accept_mapping",
+            scope_name="service",
+            entity_type="RepairServiceStep",
+            field_path="RepairServiceStep.diagnose",
+            original_value="hydraulic humming cycle",
+            concept_id="pump_fault",
+            proposed_surface_form="hydraulic humming cycle",
+            reviewer="prototype_review",
+        )
+        approved = approve_feedback_proposal(proposal, reviewer="prototype_review")
+
+        old_path = os.environ.get("DPP_DQ_LEARNED_FEEDBACK_PATH")
+        old_embedding_model = free_text_module._embedding_model
+        with tempfile.TemporaryDirectory() as tmpdir:
+            feedback_path = Path(tmpdir) / "learned_feedback.json"
+            feedback_path.write_text(
+                json.dumps({"feedback": [approved.as_dict()]}),
+                encoding="utf-8",
+            )
+            os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = str(feedback_path)
+            free_text_module._embedding_model = lambda: FakeEmbeddingModel()
+            try:
+                result = normalize_text_value(
+                    "diagnosis",
+                    "pump makes a hydraulic humming noise",
+                    enable_semantic=True,
+                )
+            finally:
+                free_text_module._embedding_model = old_embedding_model
+                if old_path is None:
+                    os.environ.pop("DPP_DQ_LEARNED_FEEDBACK_PATH", None)
+                else:
+                    os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = old_path
+
+        self.assertEqual("ambiguous", result.status)
+        self.assertIsNone(result.normalized_concept)
+        self.assertEqual("pump_fault", result.candidates[0].concept_id)
+        self.assertEqual("learned_feedback_semantic", result.candidates[0].match_type)
+        self.assertEqual("learned_feedback", result.candidates[0].source)
+        self.assertEqual(approved.proposal_id, result.candidates[0].feedback_id)
+
+    def test_harmonization_report_carries_learned_feedback_candidate_provenance(self) -> None:
+        proposal = create_feedback_proposal(
+            action="accept_mapping",
+            scope_name="service",
+            entity_type="RepairServiceStep",
+            field_path="RepairServiceStep.diagnose",
+            original_value="hydraulic humming cycle",
+            concept_id="pump_fault",
+            proposed_surface_form="hydraulic humming cycle",
+            reviewer="prototype_review",
+        )
+        approved = approve_feedback_proposal(proposal, reviewer="prototype_review")
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "service-001",
+                    "@type": "dpp:RepairServiceStep",
+                    "diagnose": "hydraulic humming cycle",
+                }
+            ],
+        }
+
+        old_path = os.environ.get("DPP_DQ_LEARNED_FEEDBACK_PATH")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            feedback_path = Path(tmpdir) / "learned_feedback.json"
+            feedback_path.write_text(
+                json.dumps({"feedback": [approved.as_dict()]}),
+                encoding="utf-8",
+            )
+            os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = str(feedback_path)
+            try:
+                result = harmonize_document(document, "service")
+            finally:
+                if old_path is None:
+                    os.environ.pop("DPP_DQ_LEARNED_FEEDBACK_PATH", None)
+                else:
+                    os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = old_path
+
+        report_entry = result.entities["service-001"].text_harmonization["diagnose"]
+
+        self.assertEqual("ambiguous", report_entry["status"])
+        self.assertNotIn("normalized_value", report_entry)
+        self.assertEqual("pump_fault", report_entry["candidates"][0]["concept_id"])
+        self.assertEqual("learned_feedback", report_entry["candidates"][0]["source"])
+        self.assertEqual(approved.proposal_id, report_entry["candidates"][0]["feedback_id"])
+
+    def test_appending_same_feedback_record_deduplicates_local_artifact(self) -> None:
+        proposal = create_feedback_proposal(
+            action="accept_mapping",
+            scope_name="service",
+            entity_type="RepairServiceStep",
+            field_path="RepairServiceStep.diagnose",
+            original_value="hydraulic humming cycle",
+            concept_id="pump_fault",
+            proposed_surface_form="hydraulic humming cycle",
+            reviewer="prototype_review",
+        )
+        approved = approve_feedback_proposal(proposal, reviewer="prototype_review")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            feedback_path = Path(tmpdir) / "learned_feedback.json"
+            first = append_feedback_record(approved, feedback_path)
+            second = append_feedback_record(approved, feedback_path)
+            mappings = load_learned_service_text_mappings(feedback_path)
+
+        self.assertEqual(first.proposal_id, second.proposal_id)
+        self.assertEqual(1, len(mappings))
+        self.assertEqual("pump_fault", mappings[0].concept_id)
 
 
 class FieldAwareWarningTests(unittest.TestCase):

@@ -5,7 +5,11 @@ import os
 import unittest
 from unittest.mock import patch
 
-from dpp.data_quality.anomaly.llm_review import _findings_from_reviews, build_service_llm_review_findings
+from dpp.data_quality.anomaly.llm_review import (
+    _build_review_context,
+    _findings_from_reviews,
+    build_service_llm_review_findings,
+)
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
 
 
@@ -62,6 +66,89 @@ class ServiceLlmReviewTests(unittest.TestCase):
         self.assertEqual("service_llm_review_ok", findings[0].check_id)
         self.assertEqual("info", findings[0].severity)
         self.assertEqual("ok", findings[0].evidence["verdict"])
+
+    def test_review_context_includes_learned_feedback_from_closest_candidates(self) -> None:
+        result = HarmonizationResult(
+            scope_name="service",
+            entities={
+                "pending-service-step": HarmonizedEntity(
+                    entity_id="pending-service-step",
+                    entity_type="RepairServiceStep",
+                    text_harmonization={
+                        "diagnose": {
+                            "original_value": "pump makes a hydraulic humming noise",
+                            "status": "unresolved",
+                            "closest_candidates": [
+                                {
+                                    "concept_id": "pump_fault",
+                                    "label": "Pump fault",
+                                    "confidence": 0.64,
+                                    "match_type": "learned_feedback_semantic",
+                                    "source": "learned_feedback",
+                                    "feedback_id": "feedback-001",
+                                }
+                            ],
+                        }
+                    },
+                )
+            },
+        )
+
+        context = _build_review_context(
+            result,
+            deterministic_findings=[],
+            review_context={"selectedPartLabel": "Vibration Pump"},
+        )
+
+        text_entry = context["service_steps"][0]["text_entries"][0]
+        learned_candidates = text_entry["learned_feedback_candidates"]
+
+        self.assertEqual(["learned_feedback"], text_entry["evidence_sources"])
+        self.assertEqual(1, len(learned_candidates))
+        self.assertEqual("pump_fault", learned_candidates[0]["concept_id"])
+        self.assertEqual("learned_feedback_semantic", learned_candidates[0]["match_type"])
+        self.assertEqual("feedback-001", learned_candidates[0]["feedback_id"])
+        self.assertEqual("candidate", learned_candidates[0]["decision_role"])
+
+    def test_review_context_omits_trace_only_learned_feedback_below_candidate_threshold(self) -> None:
+        result = HarmonizationResult(
+            scope_name="service",
+            entities={
+                "pending-service-step": HarmonizedEntity(
+                    entity_id="pending-service-step",
+                    entity_type="RepairServiceStep",
+                    text_harmonization={
+                        "diagnose": {
+                            "original_value": "grinder motor burned out",
+                            "status": "unresolved",
+                            "closest_candidates": [
+                                {
+                                    "concept_id": "pump_fault",
+                                    "label": "Pump fault",
+                                    "confidence": 0.22,
+                                    "match_type": "learned_feedback_semantic",
+                                    "source": "learned_feedback",
+                                    "feedback_id": "feedback-001",
+                                }
+                            ],
+                        }
+                    },
+                )
+            },
+        )
+
+        context = _build_review_context(
+            result,
+            deterministic_findings=[],
+            review_context={"selectedPartLabel": "Vibration Pump"},
+        )
+
+        text_entry = context["service_steps"][0]["text_entries"][0]
+
+        self.assertEqual([], text_entry["learned_feedback_candidates"])
+        self.assertEqual([], text_entry["candidate_concepts"])
+        self.assertEqual([], text_entry["evidence_sources"])
+        self.assertEqual(1, text_entry["trace_only_candidates_omitted"])
 
 
 if __name__ == "__main__":

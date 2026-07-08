@@ -356,4 +356,12 @@ export const api = {
   getDataQualityExample(name) {
     return fetchJSON(joinURL(API_BASE_URL, `/data-quality/examples/${encodeURIComponent(name)}`));
   },
+
+  listDataQualityServiceConcepts() {
+    return fetchJSON(joinURL(API_BASE_URL, "/data-quality/service-concepts"));
+  },
+
+  createDataQualityServiceTextFeedback(body) {
+    return postJSON(joinURL(API_BASE_URL, "/data-quality/feedback/service-text"), body);
+  },
 };
