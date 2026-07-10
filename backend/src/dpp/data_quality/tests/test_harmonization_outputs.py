@@ -108,10 +108,11 @@ class ServiceSurfaceFormTests(unittest.TestCase):
     def test_core_symptom_surface_forms_normalize_without_semantic_fallback(self) -> None:
         expected_concepts = {
             "water leak": "water_leakage",
-            "not grinding": "grinder_not_working",
+            "coffee grinder not grinding": "grinder_not_working",
             "no coffee coming out": "no_coffee_output",
             "not heating water": "water_not_heating",
             "not piercing coffee capsules": "pod_not_pierced",
+            "Leaks water from pod": "pod_area_leakage",
         }
 
         for text, expected_concept in expected_concepts.items():
@@ -121,13 +122,19 @@ class ServiceSurfaceFormTests(unittest.TestCase):
                 self.assertEqual(expected_concept, result.normalized_concept)
                 self.assertEqual("alias", result.method)
 
+        for generic_text in ("Leaking", "not working"):
+            with self.subTest(text=generic_text):
+                result = normalize_text_value("symptom", generic_text, enable_semantic=False)
+                self.assertEqual("unresolved", result.status)
+                self.assertIsNone(result.normalized_concept)
+
     def test_core_diagnosis_surface_forms_normalize_without_semantic_fallback(self) -> None:
         expected_concepts = {
-            "dead pump": "pump_fault",
+            "pump is dead": "pump_fault",
             "clogged with limescale": "limescale_or_scale_build_up",
             "faulty solenoid": "valve_or_solenoid_fault",
             "plug fuse blown": "fuse_or_thermal_fuse_fault",
-            "plunger fault": "pod_mechanism_or_lid_fault",
+            "plunger cannot pierce capsules": "pod_mechanism_or_lid_fault",
         }
 
         for text, expected_concept in expected_concepts.items():
@@ -718,7 +725,7 @@ class CleanJsonLdOutputTests(unittest.TestCase):
             if "review_action" in finding
         }
         self.assertIn("confirm_or_correct_service_concept", review_actions)
-        self.assertIn("verify_service_step_type_or_concept", review_actions)
+        self.assertIn("confirm_or_reject_review_candidate_concept", review_actions)
 
     def test_refurbishment_replacement_pairs_roundtrip_as_legacy_nested_parts(self) -> None:
         document = {
