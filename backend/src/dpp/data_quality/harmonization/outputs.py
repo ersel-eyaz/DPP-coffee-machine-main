@@ -34,6 +34,8 @@ from dpp.data_quality.harmonization.normalizers import (
     AUTO_ENUM_SEMANTIC_THRESHOLD,
     AUTO_UNIT_FUZZY_THRESHOLD,
     MIN_ENUM_SEMANTIC_MARGIN,
+    allowed_source_units_for_target,
+    canonical_enum_values_for_path,
 )
 from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
@@ -306,6 +308,179 @@ def _field_role(scope_name: str, canonical_path: str) -> str | None:
             return field.role
 
     return None
+
+
+def _scope_field(scope_name: str, canonical_path: str) -> Any | None:
+    """Return the configured canonical field for one path."""
+    scope = SUPPORTED_SCOPES.get(scope_name)
+    if scope is None:
+        return None
+
+    for field in scope.fields:
+        if field.path == canonical_path:
+            return field
+
+    return None
+
+
+def _reportable_target_fields(scope_name: str, entity_type: str) -> list[dict[str, Any]]:
+    """Return closed target fields that can help explain an unmapped label."""
+    scope = SUPPORTED_SCOPES.get(scope_name)
+    if scope is None:
+        return []
+
+    supported_roles = {"label_harmonization", "unit_harmonization", "controlled_vocabulary"}
+    targets = []
+    for field in scope.fields:
+        if field.entity_type != entity_type or field.role not in supported_roles:
+            continue
+        targets.append(
+            _drop_none_values(
+                {
+                    "id": field.path,
+                    "label": field.field_name,
+                    "role": field.role,
+                    "target_unit": field.target_unit,
+                    "description": field.description,
+                }
+            )
+        )
+    return targets
+
+
+def _unmapped_field_guidance(scope_name: str, entity_type: str) -> dict[str, Any] | None:
+    """Return schema-aware guidance for an unmapped input label."""
+    targets = _reportable_target_fields(scope_name, entity_type)
+    if not targets:
+        return None
+
+    return {
+        "kind": "possible_canonical_fields",
+        "message": "No safe label mapping was found. This entity supports the listed harmonization targets.",
+        "targets": targets,
+    }
+
+
+_EXPLICIT_UNIT_TARGETS_BY_FIELD = {
+    "ActivityData.unit": ("km", "kg", "kWh", "ltr", "m3", "t"),
+    "EmissionFactor.unit": ("kgCO2e/kWh", "kgCO2e/kg", "kgCO2e/km"),
+}
+
+
+def _unit_guidance_targets(canonical_path: str, target_unit: str | None) -> tuple[str, ...]:
+    """Return expected unit targets for one canonical unit/value field."""
+    explicit_targets = _EXPLICIT_UNIT_TARGETS_BY_FIELD.get(canonical_path)
+    if explicit_targets is not None:
+        return explicit_targets
+
+    binding = unit_binding_for_field(canonical_path)
+    if binding is not None:
+        return tuple(sorted(binding.accepted_source_units | {binding.target_unit}))
+
+    if target_unit is not None:
+        return tuple(sorted(allowed_source_units_for_target(target_unit) | {target_unit}))
+
+    return ()
+
+
+def _field_guidance(scope_name: str, canonical_path: str, field_dict: dict[str, Any]) -> dict[str, Any] | None:
+    """Return closed-target guidance for a mapped field whose value/unit failed."""
+    field = _scope_field(scope_name, canonical_path)
+    if field is None:
+        return None
+
+    if field.role == "controlled_vocabulary":
+        values = canonical_enum_values_for_path(canonical_path)
+        if not values:
+            return None
+        return {
+            "kind": "allowed_enum_values",
+            "message": "This controlled-vocabulary field expects one of the listed canonical values.",
+            "targets": [{"id": value, "label": value} for value in values],
+        }
+
+    if field.role == "unit_harmonization" or field.target_unit is not None or unit_binding_for_field(canonical_path):
+        units = _unit_guidance_targets(canonical_path, field.target_unit)
+        if field.role == "unit_harmonization":
+            message = "This unit field expects one of the listed compatible unit values."
+        elif units:
+            message = "This field expects a numeric value and one of the listed compatible units."
+        else:
+            message = "This field expects a numeric value."
+        return {
+            "kind": "expected_unit_or_numeric_value",
+            "message": message,
+            "targets": [{"id": unit, "label": unit} for unit in units],
+        }
+
+    return None
+
+
+def _with_field_guidance(scope_name: str, canonical_path: str, field_dict: dict[str, Any]) -> dict[str, Any]:
+    """Attach report-only guidance to value/unit failures where the target set is closed."""
+    if field_dict.get("status") != "error":
+        return field_dict
+
+    guidance = _field_guidance(scope_name, canonical_path, field_dict)
+    if guidance is None:
+        return field_dict
+
+    return {**field_dict, "guidance": guidance}
+
+
+def _with_unmapped_field_guidance(scope_name: str, entity_type: str, field_dict: dict[str, Any]) -> dict[str, Any]:
+    """Attach report-only target guidance to an unmapped raw input label."""
+    guidance = _unmapped_field_guidance(scope_name, entity_type)
+    if guidance is None:
+        return field_dict
+
+    return {**field_dict, "guidance": guidance}
+
+
+def _issue_guidance(
+    *,
+    scope_name: str,
+    entity_type: str,
+    issue_dict: dict[str, Any],
+    fields: dict[str, dict[str, Any]],
+    unmapped_fields: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return guidance for an issue by matching it back to a field report entry."""
+    field_label = issue_dict.get("field_label")
+    if not field_label:
+        return None
+
+    for field in fields.values():
+        if field.get("original_label") == field_label and field.get("guidance") is not None:
+            return field["guidance"]
+
+    for field in unmapped_fields:
+        if (field.get("label") or field.get("original_label")) == field_label and field.get("guidance") is not None:
+            return field["guidance"]
+
+    return _unmapped_field_guidance(scope_name, entity_type)
+
+
+def _with_issue_guidance(
+    *,
+    scope_name: str,
+    entity_type: str,
+    issue_dict: dict[str, Any],
+    fields: dict[str, dict[str, Any]],
+    unmapped_fields: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Attach report-only guidance to issues where a closed target set is known."""
+    guidance = _issue_guidance(
+        scope_name=scope_name,
+        entity_type=entity_type,
+        issue_dict=issue_dict,
+        fields=fields,
+        unmapped_fields=unmapped_fields,
+    )
+    if guidance is None:
+        return issue_dict
+
+    return {**issue_dict, "guidance": guidance}
 
 
 def _value_thresholds_for_field(scope_name: str, canonical_path: str) -> dict[str, Any] | None:
@@ -625,7 +800,11 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
                     _with_decision_thresholds(
                         result.scope_name,
                         canonical_path,
-                        _format_service_field_for_report(canonical_path, field_dict),
+                        _with_field_guidance(
+                            result.scope_name,
+                            canonical_path,
+                            _format_service_field_for_report(canonical_path, field_dict),
+                        ),
                     ),
                 )
                 for canonical_path, field_dict in entity_dict.get("fields", {}).items()
@@ -638,11 +817,31 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
                     _with_decision_thresholds(
                         result.scope_name,
                         canonical_path,
-                        _format_measurement_field_for_report(field_dict),
+                        _with_field_guidance(
+                            result.scope_name,
+                            canonical_path,
+                            _format_measurement_field_for_report(field_dict),
+                        ),
                     ),
                 )
                 for canonical_path, field_dict in entity_dict.get("fields", {}).items()
             }
+
+        entity_dict["unmapped_fields"] = [
+            _with_unmapped_field_guidance(result.scope_name, entity.entity_type, field_dict)
+            for field_dict in entity_dict.get("unmapped_fields", [])
+        ]
+
+        entity_dict["issues"] = [
+            _with_issue_guidance(
+                scope_name=result.scope_name,
+                entity_type=entity.entity_type,
+                issue_dict=issue_dict,
+                fields=entity_dict.get("fields", {}),
+                unmapped_fields=entity_dict.get("unmapped_fields", []),
+            )
+            for issue_dict in entity_dict.get("issues", [])
+        ]
 
         if not entity_dict.get("text_harmonization"):
             entity_dict.pop("text_harmonization", None)

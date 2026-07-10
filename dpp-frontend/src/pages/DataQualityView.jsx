@@ -109,6 +109,30 @@ function ThresholdSummary({ label, profiles }) {
   );
 }
 
+function GuidancePanel({ guidance }) {
+  if (!guidance) return null;
+  const targets = Array.isArray(guidance.targets) ? guidance.targets : [];
+  const visibleTargets = targets.slice(0, 10);
+  return (
+    <div className="border rounded bg-light py-2 px-2 mt-2 mb-0">
+      <div className="small fw-semibold">{guidance.message || "Expected targets"}</div>
+      {visibleTargets.length > 0 && (
+        <div className="small mt-1 d-flex flex-wrap gap-1">
+          {visibleTargets.map((target, index) => (
+            <Badge key={`${target.id || target.label || index}`} bg="light" text="dark" className="border">
+              {target.id || target.label}
+              {target.target_unit ? ` · ${target.target_unit}` : ""}
+            </Badge>
+          ))}
+          {targets.length > visibleTargets.length && (
+            <Badge bg="secondary">+{targets.length - visibleTargets.length} more</Badge>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function sameThresholdProfiles(left, right) {
   return left.length > 0
     && right.length > 0
@@ -328,6 +352,7 @@ function flattenHarmonizationEntities(report) {
         normalized_value: null,
         status: "unmapped",
         confidence: null,
+        guidance: field.guidance,
       });
     }
   }
@@ -705,32 +730,35 @@ function SummaryModal({ type, result, onHide }) {
         {type === "unmapped" && (
           unmappedFields.length ? (
             <div className="d-flex flex-column gap-2">
-              {unmappedFields.map((field, index) => (
-                <Card key={`${field.entity_id}-${field.original_label}-${index}`} className="shadow-none">
-                  <Card.Body>
-                    <div className="fw-semibold">{field.original_label || field.canonical_path}</div>
-                    <div className="small text-muted">
-                      {field.entity_type} · {field.entity_id}
-                    </div>
-                    <div className="dq-json-cell mt-2">{prettyJson(field.original_value)}</div>
-                    {harmonizationIssues.filter(
-                      (issue) => issue.entity_id === field.entity_id && issue.field_label === field.original_label,
-                    ).length ? (
-                      harmonizationIssues
-                        .filter((issue) => issue.entity_id === field.entity_id && issue.field_label === field.original_label)
-                        .map((issue, issueIndex) => (
+              {unmappedFields.map((field, index) => {
+                const matchingIssues = harmonizationIssues.filter(
+                  (issue) => issue.entity_id === field.entity_id && issue.field_label === field.original_label,
+                );
+                return (
+                  <Card key={`${field.entity_id}-${field.original_label}-${index}`} className="shadow-none">
+                    <Card.Body>
+                      <div className="fw-semibold">{field.original_label || field.canonical_path}</div>
+                      <div className="small text-muted">
+                        {field.entity_type} · {field.entity_id}
+                      </div>
+                      <div className="dq-json-cell mt-2">{prettyJson(field.original_value)}</div>
+                      {matchingIssues.length ? (
+                        matchingIssues.map((issue, issueIndex) => (
                           <Alert key={issueIndex} variant={severityVariant(issue.severity)} className="py-2 mt-2 mb-0">
                             {issue.message}
+                            <GuidancePanel guidance={issue.guidance} />
                           </Alert>
                         ))
-                    ) : (
-                      <Alert variant="secondary" className="py-2 mt-2 mb-0">
-                        No mapping candidate above the review threshold.
-                      </Alert>
-                    )}
-                  </Card.Body>
-                </Card>
-              ))}
+                      ) : (
+                        <Alert variant="secondary" className="py-2 mt-2 mb-0">
+                          No mapping candidate above the review threshold.
+                          <GuidancePanel guidance={field.guidance} />
+                        </Alert>
+                      )}
+                    </Card.Body>
+                  </Card>
+                );
+              })}
             </div>
           ) : (
             <Alert variant="success" className="mb-0">
@@ -753,6 +781,7 @@ function SummaryModal({ type, result, onHide }) {
                     <div className="small text-muted mt-1">
                       {issue.entity_type || "-"} · {issue.entity_id || "-"}
                     </div>
+                    <GuidancePanel guidance={issue.guidance} />
                   </Card.Body>
                 </Card>
               ))}
@@ -851,6 +880,7 @@ function SummaryModal({ type, result, onHide }) {
                     <div className="small">
                       Value check: <span className="fw-semibold">{formatMethod(field.value_method, field.value_confidence)}</span>
                     </div>
+                    <GuidancePanel guidance={field.guidance} />
                   </Card.Body>
                 </Card>
               ))}

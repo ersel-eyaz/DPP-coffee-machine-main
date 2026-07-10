@@ -523,6 +523,76 @@ class UnitAliasTests(unittest.TestCase):
         )
 
 
+class HarmonizationReportGuidanceTests(unittest.TestCase):
+    def test_unmapped_label_report_lists_possible_canonical_fields(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "dpp-static-guidance-001",
+                    "@type": "dpp:DPPStatic",
+                    "mysteryMeasurement": {"value": 10, "unit": "kg"},
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "product")
+        report = build_harmonization_report(result)
+        unmapped = report["entities"]["dpp-static-guidance-001"]["unmapped_fields"][0]
+
+        self.assertEqual("possible_canonical_fields", unmapped["guidance"]["kind"])
+        self.assertTrue(
+            any(target["id"] == "DPPStatic.weightGRM" for target in unmapped["guidance"]["targets"])
+        )
+
+    def test_controlled_vocabulary_report_lists_allowed_values(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "activity-enum-guidance-001",
+                    "@type": "dpp:ActivityData",
+                    "dpp:activityType": "space magic",
+                    "dpp:quantity": 1,
+                    "dpp:activityUnit": "km",
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "emission")
+        report = build_harmonization_report(result)
+        field = report["entities"]["activity-enum-guidance-001"]["fields"]["ActivityData.activity_type"]
+
+        self.assertEqual("error", field["status"])
+        self.assertEqual("allowed_enum_values", field["guidance"]["kind"])
+        self.assertTrue(
+            any(target["id"] == "electricity_consumption" for target in field["guidance"]["targets"])
+        )
+
+    def test_unit_field_report_lists_expected_units(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "activity-unit-guidance-001",
+                    "@type": "dpp:ActivityData",
+                    "dpp:activityType": "distance traveled",
+                    "dpp:quantity": 1,
+                    "dpp:activityUnit": "banana",
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "emission")
+        report = build_harmonization_report(result)
+        field = report["entities"]["activity-unit-guidance-001"]["fields"]["ActivityData.unit"]
+
+        self.assertEqual("error", field["status"])
+        self.assertEqual("expected_unit_or_numeric_value", field["guidance"]["kind"])
+        self.assertIn("unit field", field["guidance"]["message"])
+        self.assertTrue(any(target["id"] == "km" for target in field["guidance"]["targets"]))
+
+
 class CleanJsonLdOutputTests(unittest.TestCase):
     def test_emission_output_uses_legacy_jsonld_vocabulary_terms(self) -> None:
         document = _load_example("enum_alias_input.json")
