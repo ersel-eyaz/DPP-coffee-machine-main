@@ -52,6 +52,14 @@ export default function ServiceView() {
   const [serviceConcepts, setServiceConcepts] = useState(null);
   const [feedbackConceptByEntry, setFeedbackConceptByEntry] = useState({});
   const [appliedFeedbackByEntry, setAppliedFeedbackByEntry] = useState({});
+  const [candidateReport, setCandidateReport] = useState(null);
+  const [candidateReportLoading, setCandidateReportLoading] = useState(false);
+  const [candidateReportErr, setCandidateReportErr] = useState(null);
+  const [metricExplanation, setMetricExplanation] = useState(null);
+  const [metricExplanationLoading, setMetricExplanationLoading] = useState(false);
+  const [metricExplanationErr, setMetricExplanationErr] = useState(null);
+  const [llmReviewLoading, setLlmReviewLoading] = useState(false);
+  const [llmReviewErr, setLlmReviewErr] = useState(null);
   const appliedFeedbackRef = useRef({});
 
   useEffect(() => {
@@ -114,6 +122,7 @@ export default function ServiceView() {
   useEffect(() => {
     setQualityResult(null);
     setQualityErr(null);
+    setLlmReviewErr(null);
     setAppliedFeedbackByEntry({});
     appliedFeedbackRef.current = {};
   }, [stepType, selPartId, costEur, diagnose, symptomsStr, newStaticId, newSerial, newBatch]);
@@ -347,7 +356,36 @@ export default function ServiceView() {
   const runServiceQualityCheck = async () => {
     setQualityChecking(true);
     setQualityErr(null);
+    setLlmReviewErr(null);
     setQualityResult(null);
+    try {
+      const selectedPart = partOptions.find((part) => part.id === selPartId);
+      const response = await api.runDataQuality({
+        scope: "service",
+        mode: "both",
+        document: buildPendingServiceQualityDocument(),
+        enable_llm_review: false,
+        review_context: {
+          selectedPartId: selPartId,
+          selectedPartLabel: selectedPart?.label || selPartId,
+          selectedServiceType: stepType,
+        },
+      });
+      setQualityResult(response);
+      return response;
+    } catch (e) {
+      const message = e?.message || String(e);
+      setQualityErr(message);
+      setToast({ show: true, msg: `Data quality check failed: ${message}`, variant: "danger" });
+      return null;
+    } finally {
+      setQualityChecking(false);
+    }
+  };
+
+  const runServiceLlmReview = async () => {
+    setLlmReviewLoading(true);
+    setLlmReviewErr(null);
     try {
       const selectedPart = partOptions.find((part) => part.id === selPartId);
       const response = await api.runDataQuality({
@@ -365,11 +403,11 @@ export default function ServiceView() {
       return response;
     } catch (e) {
       const message = e?.message || String(e);
-      setQualityErr(message);
-      setToast({ show: true, msg: `Data quality check failed: ${message}`, variant: "danger" });
+      setLlmReviewErr(message);
+      setToast({ show: true, msg: `LLM service review failed: ${message}`, variant: "danger" });
       return null;
     } finally {
-      setQualityChecking(false);
+      setLlmReviewLoading(false);
     }
   };
 
@@ -634,6 +672,54 @@ export default function ServiceView() {
   );
   const qualitySummary = qualityResult?.harmonization_report?.summary;
 
+  const buildCandidateReportUnresolvedObservations = () =>
+    qualityTextEntries
+      .filter((entry) => entry.status !== "normalized" && entry.original_value)
+      .map((entry, index) => ({
+        observation_id: `${entry.entity_id || "pending"}-${entry.field_name || "field"}-${index + 1}`,
+        kind: entry.field_name === "diagnose" ? "diagnosis" : "symptom",
+        text: String(entry.original_value || ""),
+        field_path: `${entry.entity_type || stepType}.${entry.field_name}`,
+        service_type: stepType,
+        part_label: partOptions.find((part) => part.id === selPartId)?.label || selPartId || "",
+      }));
+
+  const runCandidateReport = async () => {
+    setCandidateReportLoading(true);
+    setCandidateReportErr(null);
+    setMetricExplanation(null);
+    setMetricExplanationErr(null);
+    try {
+      const report = await api.buildServiceConceptCandidateReport({
+        unresolved_observations: buildCandidateReportUnresolvedObservations(),
+        cluster_similarity_threshold: 0.72,
+      });
+      setCandidateReport(report);
+    } catch (e) {
+      setCandidateReportErr(e?.message || String(e));
+    } finally {
+      setCandidateReportLoading(false);
+    }
+  };
+
+  const runMetricExplanation = async () => {
+    if (!candidateReport?.clustering_quality) return;
+    setMetricExplanationLoading(true);
+    setMetricExplanationErr(null);
+    try {
+      const explanation = await api.explainServiceConceptCandidateMetrics({
+        clustering_quality: candidateReport.clustering_quality,
+        sources: candidateReport.sources || {},
+        parameters: candidateReport.parameters || {},
+      });
+      setMetricExplanation(explanation);
+    } catch (e) {
+      setMetricExplanationErr(e?.message || String(e));
+    } finally {
+      setMetricExplanationLoading(false);
+    }
+  };
+
   return (
     <Container className="py-3">
       <style>{`
@@ -657,6 +743,9 @@ export default function ServiceView() {
         .quality-caution-note { display:flex; align-items:flex-start; gap:.35rem; font-size:.74rem; line-height:1.25; color:#6c757d; margin-top:.3rem; }
         .quality-caution-mark { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:.95rem; height:.95rem; border-radius:50%; border:1px solid #adb5bd; font-size:.68rem; font-weight:700; color:#6c757d; margin-top:.02rem; }
         .history-original-tip { display: inline-flex; flex: 0 0 auto; vertical-align: -0.1em; line-height: 1; margin-left: .1rem !important; }
+        .candidate-report-card .table { margin-bottom: 0; }
+        .candidate-report-card .metric-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:.5rem; }
+        .candidate-report-card .metric-cell { background:#f8f9fa; border:1px solid #e9ecef; border-radius:.4rem; padding:.45rem .55rem; }
       `}</style>
       <Row className="align-items-center mb-2">
         <Col>
@@ -697,6 +786,47 @@ export default function ServiceView() {
                 <b>{healthyCount}</b>/<b>{totalPartsInTree}</b> {healthyCount === 1 ? "part" : "parts"} OK
                 <InfoTip className="ms-2" text={FIELD_HELP["status.overall"]} />
               </div>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+      <Row className="mb-3">
+        <Col>
+          <Card className="candidate-report-card">
+            <Card.Header className="h6 d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
+              <span>Service vocabulary review</span>
+              <Button
+                size="sm"
+                variant="outline-primary"
+                onClick={runCandidateReport}
+                disabled={candidateReportLoading}
+              >
+                {candidateReportLoading ? (
+                  <>
+                    <Spinner animation="border" size="sm" className="me-1" />
+                    Building report…
+                  </>
+                ) : (
+                  "Build candidate report"
+                )}
+              </Button>
+            </Card.Header>
+            <Card.Body>
+              {!candidateReport && !candidateReportErr && (
+                <div className="text-muted small">
+                  Clusters approved learned feedback and unresolved service text for controlled vocabulary review. It does not update the core registry.
+                </div>
+              )}
+              {candidateReportErr && <Alert variant="danger" className="py-2 mb-0">{candidateReportErr}</Alert>}
+              {candidateReport && (
+                <CandidateConceptReportSummary
+                  report={candidateReport}
+                  metricExplanation={metricExplanation}
+                  metricExplanationErr={metricExplanationErr}
+                  metricExplanationLoading={metricExplanationLoading}
+                  onExplainMetrics={runMetricExplanation}
+                />
+              )}
             </Card.Body>
           </Card>
         </Col>
@@ -1336,6 +1466,30 @@ export default function ServiceView() {
                         </div>
                       )}
 
+                      {qualityResult && qualityLlmFindings.length === 0 && (
+                        <div className="d-flex flex-column align-items-start gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline-primary"
+                            onClick={runServiceLlmReview}
+                            disabled={llmReviewLoading}
+                          >
+                            {llmReviewLoading ? (
+                              <>
+                                <Spinner animation="border" size="sm" className="me-1" />
+                                Running LLM review…
+                              </>
+                            ) : (
+                              "Run LLM service review"
+                            )}
+                          </Button>
+                          <div className="small text-muted">
+                            Optional advisory layer. This calls the OpenAI API and may use API credit.
+                          </div>
+                          {llmReviewErr && <Alert variant="danger" className="py-2 mb-0">{llmReviewErr}</Alert>}
+                        </div>
+                      )}
+
                       {qualityLlmFindings.length > 0 && (
                         <div className="quality-llm-review">
                           <div className="small fw-semibold mb-1">LLM service review</div>
@@ -1376,6 +1530,212 @@ export default function ServiceView() {
       </Modal>
     </Container>
   );
+}
+
+function CandidateConceptReportSummary({
+  report,
+  metricExplanation,
+  metricExplanationErr,
+  metricExplanationLoading,
+  onExplainMetrics,
+}) {
+  const quality = report?.clustering_quality || {};
+  const clusters = Array.isArray(report?.clusters) ? report.clusters : [];
+  const aliasCandidates = Array.isArray(report?.core_alias_candidates) ? report.core_alias_candidates : [];
+  const sources = report?.sources || {};
+
+  return (
+    <div className="d-flex flex-column gap-3">
+      <div className="d-flex flex-wrap gap-2">
+        <Badge bg="secondary">Observations {quality.observations_total ?? 0}</Badge>
+        <Badge bg="secondary">Clusters {quality.clusters_total ?? 0}</Badge>
+        <Badge bg={quality.singleton_clusters_total ? "warning" : "success"}>
+          Singletons {quality.singleton_clusters_total ?? 0}
+        </Badge>
+        <Badge bg="info">Learned {sources.learned_feedback_observations ?? 0}</Badge>
+        <Badge bg="info">Current unresolved {sources.request_unresolved_observations ?? 0}</Badge>
+      </div>
+
+      <div>
+        <div className="small fw-semibold mb-2">Clustering quality</div>
+        <div className="metric-grid">
+          <MetricCell label="Mean cluster size" value={formatMetric(quality.mean_cluster_size)} />
+          <MetricCell label="Largest cluster" value={quality.largest_cluster_size ?? 0} />
+          <MetricCell label="Mean cohesion" value={formatMetric(quality.mean_intra_cluster_similarity)} />
+          <MetricCell label="Nearest-cluster similarity" value={formatMetric(quality.mean_nearest_other_cluster_similarity)} />
+          <MetricCell label="Approx. silhouette" value={formatMetric(quality.approximate_silhouette)} />
+          <MetricCell label="Mean core margin" value={formatMetric(quality.mean_core_margin)} />
+        </div>
+        {quality.metric_note && <div className="small text-muted mt-2">{quality.metric_note}</div>}
+        <div className="mt-2 d-flex flex-column align-items-start gap-1">
+          <Button
+            size="sm"
+            variant="outline-primary"
+            onClick={onExplainMetrics}
+            disabled={metricExplanationLoading}
+          >
+            {metricExplanationLoading ? (
+              <>
+                <Spinner animation="border" size="sm" className="me-1" />
+                Explaining metrics…
+              </>
+            ) : (
+              "Explain metrics with LLM"
+            )}
+          </Button>
+          <div className="small text-muted">
+            Sends only aggregate clustering metrics. No service text or concept decision is sent.
+          </div>
+          {metricExplanationErr && <Alert variant="danger" className="py-2 mb-0">{metricExplanationErr}</Alert>}
+          {metricExplanation && <MetricExplanationPanel explanation={metricExplanation} />}
+        </div>
+      </div>
+
+      <div>
+        <div className="small fw-semibold mb-2">Core alias candidates</div>
+        {aliasCandidates.length ? (
+          <Table size="sm" responsive className="align-middle">
+            <thead>
+              <tr>
+                <th>Concept</th>
+                <th>Kind</th>
+                <th>Support</th>
+                <th>Surface forms</th>
+              </tr>
+            </thead>
+            <tbody>
+              {aliasCandidates.slice(0, 6).map((candidate) => (
+                <tr key={`${candidate.kind}-${candidate.concept_id}`}>
+                  <td className="fw-semibold">{candidate.concept_id}</td>
+                  <td>{candidate.kind}</td>
+                  <td>{candidate.support_count}</td>
+                  <td className="wrap">{(candidate.surface_forms || []).slice(0, 3).join("; ") || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        ) : (
+          <Alert variant="secondary" className="py-2 mb-0">
+            No learned feedback alias candidates yet.
+          </Alert>
+        )}
+      </div>
+
+      <div>
+        <div className="small fw-semibold mb-2">Candidate clusters</div>
+        {clusters.length ? (
+          <Table size="sm" responsive className="align-middle">
+            <thead>
+              <tr>
+                <th>Cluster</th>
+                <th>Kind</th>
+                <th>Evidence</th>
+                <th>Learned target</th>
+                <th>Lexical core anchor</th>
+                <th>Representatives</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clusters.slice(0, 8).map((cluster) => (
+                <tr key={cluster.cluster_id}>
+                  <td className="fw-semibold">{cluster.cluster_id}</td>
+                  <td>{cluster.kind}</td>
+                  <td>
+                    {cluster.n_total} total · {cluster.n_learned} learned · {cluster.n_unresolved} unresolved
+                  </td>
+                  <td>
+                    {cluster.top_learned_target ? (
+                      <>
+                        <span className="fw-semibold">{cluster.top_learned_target}</span>
+                        {cluster.top_learned_target_share != null && (
+                          <span className="text-muted"> ({formatMetric(cluster.top_learned_target_share)})</span>
+                        )}
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td>
+                    {formatNearestCoreIds(cluster)}
+                    {cluster.nearest_core_similarity != null && (
+                      <span className="text-muted"> ({formatMetric(cluster.nearest_core_similarity)})</span>
+                    )}
+                  </td>
+                  <td className="wrap">{(cluster.representative_texts || []).slice(0, 2).join("; ") || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        ) : (
+          <Alert variant="secondary" className="py-2 mb-0">
+            No candidate clusters yet.
+          </Alert>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MetricExplanationPanel({ explanation }) {
+  if (explanation?.status === "unavailable") {
+    return (
+      <Alert variant="secondary" className="py-2 mb-0">
+        {explanation.message || "LLM metric explanation is unavailable."}
+      </Alert>
+    );
+  }
+
+  const interpretation = explanation?.interpretation || {};
+  const points = Array.isArray(interpretation.points) ? interpretation.points : [];
+  const limitations = Array.isArray(interpretation.limitations) ? interpretation.limitations : [];
+
+  return (
+    <div className="quality-llm-review w-100 mt-1">
+      <div className="small fw-semibold mb-1">LLM metric explanation</div>
+      {interpretation.summary && <div className="small wrap mb-1">{interpretation.summary}</div>}
+      {points.length > 0 && (
+        <ul className="small mb-1 ps-3">
+          {points.slice(0, 4).map((point, index) => (
+            <li key={`point-${index}`}>{point}</li>
+          ))}
+        </ul>
+      )}
+      {limitations.length > 0 && (
+        <div className="small text-muted">
+          {limitations.slice(0, 2).join(" ")}
+        </div>
+      )}
+      <div className="quality-caution-note">
+        <span className="quality-caution-mark">!</span>
+        <span>Advisory only; this does not validate clustering performance.</span>
+      </div>
+    </div>
+  );
+}
+
+function MetricCell({ label, value }) {
+  return (
+    <div className="metric-cell">
+      <div className="small text-muted">{label}</div>
+      <div className="fw-semibold">{value}</div>
+    </div>
+  );
+}
+
+function formatNearestCoreIds(cluster) {
+  const ids = Array.isArray(cluster?.nearest_core_ids) && cluster.nearest_core_ids.length
+    ? cluster.nearest_core_ids
+    : cluster?.nearest_core_id
+      ? [cluster.nearest_core_id]
+      : [];
+  if (!ids.length) return "—";
+  return ids.join(", ");
+}
+
+function formatMetric(value) {
+  if (value === null || value === undefined) return "—";
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : "—";
 }
 
 function severityVariant(severity) {

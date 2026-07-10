@@ -364,4 +364,12 @@ export const api = {
   createDataQualityServiceTextFeedback(body) {
     return postJSON(joinURL(API_BASE_URL, "/data-quality/feedback/service-text"), body);
   },
+
+  buildServiceConceptCandidateReport(body = {}) {
+    return postJSON(joinURL(API_BASE_URL, "/data-quality/service-concept-candidates"), body);
+  },
+
+  explainServiceConceptCandidateMetrics(body = {}) {
+    return postJSON(joinURL(API_BASE_URL, "/data-quality/service-concept-candidates/metric-interpretation"), body);
+  },
 };

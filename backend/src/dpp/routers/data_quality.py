@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-from typing import Any, Dict, Literal
+from typing import Any, Dict, List, Literal, Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,12 @@ from dpp.data_quality.harmonization.feedback import (
     approve_feedback_proposal,
     create_feedback_proposal,
     learned_mapping_from_feedback,
+    load_learned_service_text_mappings,
+)
+from dpp.data_quality.harmonization.candidate_concepts import (
+    build_candidate_concept_evidence_report,
+    observations_from_learned_feedback,
+    unresolved_service_observation,
 )
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.parser import ParseError, parse_jsonld_document
@@ -26,6 +34,20 @@ from dpp.data_quality.scopes import SUPPORTED_SCOPES
 
 DataQualityScope = Literal["auto", "product", "emission", "service"]
 DataQualityMode = Literal["harmonization", "anomaly", "both"]
+DEFAULT_METRIC_EXPLANATION_MODEL = "gpt-5.4-mini"
+METRIC_EXPLANATION_TIMEOUT_SECONDS = 20.0
+
+
+_METRIC_EXPLANATION_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["summary", "points", "limitations"],
+    "properties": {
+        "summary": {"type": "string"},
+        "points": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+    },
+}
 
 
 class DataQualityRunRequest(BaseModel):
@@ -47,13 +69,47 @@ class ServiceTextFeedbackRequest(BaseModel):
     field_path: str = Field(..., description="Canonical service-text field path, e.g. RepairServiceStep.diagnose.")
     original_value: str = Field(..., description="Original service text to store as local learned evidence.")
     concept_id: str = Field(..., description="Existing service concept id selected by the reviewer.")
-    proposed_surface_form: str | None = Field(
+    proposed_surface_form: Optional[str] = Field(
         None,
         description="Optional surface form. Defaults to original_value.",
     )
-    rationale: str | None = Field(
+    rationale: Optional[str] = Field(
         None,
         description="Optional non-verified prototype review rationale.",
+    )
+
+
+class ServiceTextCandidateObservationRequest(BaseModel):
+    observation_id: Optional[str] = None
+    kind: Literal["symptom", "diagnosis"]
+    text: str
+    field_path: Optional[str] = None
+    service_type: Optional[str] = None
+    part_label: Optional[str] = None
+
+
+class ServiceConceptCandidateReportRequest(BaseModel):
+    unresolved_observations: List[ServiceTextCandidateObservationRequest] = Field(default_factory=list)
+    cluster_similarity_threshold: float = Field(
+        0.72,
+        ge=0.0,
+        le=1.0,
+        description="Prototype lexical similarity threshold used to group service-text observations.",
+    )
+
+
+class CandidateMetricInterpretationRequest(BaseModel):
+    clustering_quality: Dict[str, Any] = Field(
+        ...,
+        description="Numeric/internal clustering diagnostics to explain.",
+    )
+    sources: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Observation source counts, without raw service text.",
+    )
+    parameters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Non-sensitive report parameters, without raw service text or concept decisions.",
     )
 
 
@@ -102,7 +158,7 @@ def _examples_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "data_quality" / "examples"
 
 
-def _service_text_kind_for_field_path(field_path: str) -> str | None:
+def _service_text_kind_for_field_path(field_path: str) -> Optional[str]:
     if field_path.endswith(".diagnose"):
         return "diagnosis"
     if field_path.endswith(".observedSymptoms"):
@@ -189,7 +245,7 @@ async def get_data_quality_example(example_name: str) -> Dict[str, Any]:
 @router.get("/service-concepts")
 async def list_service_concepts() -> Dict[str, Any]:
     """Return service concepts that can be selected for prototype feedback."""
-    concepts_by_kind: Dict[str, list[Dict[str, Any]]] = {}
+    concepts_by_kind: Dict[str, List[Dict[str, Any]]] = {}
     for kind, concepts in TEXT_CONCEPTS_BY_KIND.items():
         concepts_by_kind[kind] = [
             {
@@ -256,6 +312,131 @@ async def create_service_text_feedback(request: ServiceTextFeedbackRequest) -> D
     }
 
 
+@router.post("/service-concept-candidates")
+async def build_service_concept_candidate_report(request: ServiceConceptCandidateReportRequest) -> Dict[str, Any]:
+    """Build a review-only service concept candidate evidence report."""
+    learned_observations = observations_from_learned_feedback(load_learned_service_text_mappings())
+    unresolved_observations = []
+    for index, observation in enumerate(request.unresolved_observations, start=1):
+        text = observation.text.strip()
+        if not text:
+            continue
+        unresolved_observations.append(
+            unresolved_service_observation(
+                observation_id=observation.observation_id or f"request-unresolved-{index}",
+                kind=observation.kind,
+                text=text,
+                field_path=observation.field_path,
+                service_type=observation.service_type,
+                part_label=observation.part_label,
+            )
+        )
+
+    report = build_candidate_concept_evidence_report(
+        (*learned_observations, *unresolved_observations),
+        cluster_similarity_threshold=request.cluster_similarity_threshold,
+    )
+    payload = report.as_dict()
+    payload["sources"] = {
+        "learned_feedback_observations": len(learned_observations),
+        "request_unresolved_observations": len(unresolved_observations),
+    }
+    return payload
+
+
+@router.post("/service-concept-candidates/metric-interpretation")
+async def explain_service_candidate_metrics(request: CandidateMetricInterpretationRequest) -> Dict[str, Any]:
+    """Return an optional LLM explanation of clustering diagnostics only."""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return {
+            "status": "unavailable",
+            "message": "LLM metric explanation is unavailable because OPENAI_API_KEY is not configured.",
+        }
+
+    context = {
+        "task": "explain_service_candidate_clustering_metrics",
+        "clustering_quality": request.clustering_quality,
+        "sources": request.sources,
+        "parameters": request.parameters,
+        "constraints": [
+            "Do not make service concept, vocabulary promotion, or alias decisions.",
+            "Do not infer domain-specific machine facts.",
+            "Explain whether the clustering diagnostics are interpretable and what their limitations are.",
+            "Treat the metrics as internal diagnostics, not validated model performance.",
+        ],
+    }
+    model = os.getenv("DPP_DQ_LLM_MODEL", DEFAULT_METRIC_EXPLANATION_MODEL).strip() or DEFAULT_METRIC_EXPLANATION_MODEL
+    timeout = _env_float("DPP_DQ_LLM_TIMEOUT_SECONDS", METRIC_EXPLANATION_TIMEOUT_SECONDS)
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "You explain clustering diagnostics for a data-quality review UI. "
+                    "You receive only aggregate metrics, not raw service text and not concept definitions. "
+                    "Give a short cautious interpretation. Do not validate performance, do not recommend "
+                    "concept promotion, and do not discuss domain-specific service concepts."
+                ),
+            },
+            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "candidate_metric_interpretation",
+                "schema": _METRIC_EXPLANATION_SCHEMA,
+                "strict": True,
+            }
+        },
+        "max_output_tokens": 500,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return {
+            "status": "unavailable",
+            "message": f"LLM metric explanation is unavailable: OpenAI API returned HTTP {exc.response.status_code}.",
+        }
+    except httpx.HTTPError as exc:
+        return {
+            "status": "unavailable",
+            "message": f"LLM metric explanation is unavailable: OpenAI API request failed ({type(exc).__name__}).",
+        }
+
+    response_text = _extract_response_text(response.json())
+    if response_text is None:
+        return {
+            "status": "unavailable",
+            "message": "LLM metric explanation is unavailable: OpenAI API response did not contain JSON text.",
+        }
+
+    try:
+        interpretation = json.loads(response_text)
+    except json.JSONDecodeError:
+        return {
+            "status": "unavailable",
+            "message": "LLM metric explanation is unavailable: OpenAI API response JSON could not be parsed.",
+        }
+
+    return {
+        "status": "ok",
+        "model": model,
+        "interpretation": interpretation,
+    }
+
+
 @router.post("/run")
 async def run_data_quality(request: DataQualityRunRequest) -> Dict[str, Any]:
     """
@@ -301,3 +482,30 @@ async def run_data_quality(request: DataQualityRunRequest) -> Dict[str, Any]:
         payload["has_errors"] = result.has_errors() or anomaly_result.has_errors()
 
     return payload
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _extract_response_text(response_payload: Dict[str, Any]) -> Optional[str]:
+    direct = response_payload.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct
+
+    for item in response_payload.get("output", []):
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content", []):
+            if not isinstance(content, dict):
+                continue
+            text = content.get("text")
+            if isinstance(text, str) and text.strip():
+                return text
+    return None
