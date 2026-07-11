@@ -956,6 +956,15 @@ export default function DataQualityView() {
   const [loading, setLoading] = useState(false);
   const [exampleLoading, setExampleLoading] = useState("");
   const [selectedSummary, setSelectedSummary] = useState(null);
+  const [showIsolationConfig, setShowIsolationConfig] = useState(false);
+  const [isolationEstimators, setIsolationEstimators] = useState("100");
+  const [isolationContamination, setIsolationContamination] = useState("0.15");
+  const [isolationMaxSamples, setIsolationMaxSamples] = useState("");
+  const [isolationRandomState, setIsolationRandomState] = useState("42");
+  const [isolationReferenceCsvType, setIsolationReferenceCsvType] = useState("product");
+  const [isolationReferenceRows, setIsolationReferenceRows] = useState([]);
+  const [isolationReferenceFileName, setIsolationReferenceFileName] = useState("");
+  const [isolationReferenceErr, setIsolationReferenceErr] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -989,6 +998,241 @@ export default function DataQualityView() {
     setErr(null);
   }
 
+  function parseDelimitedLine(line, delimiter) {
+    const values = [];
+    let current = "";
+    let inQuotes = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      const next = line[index + 1];
+      if (char === '"' && inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === delimiter && !inQuotes) {
+        values.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    values.push(current.trim());
+    return values;
+  }
+
+  function detectDelimiter(headerLine) {
+    const candidates = [",", ";", "\t"];
+    return candidates
+      .map((delimiter) => ({ delimiter, columns: parseDelimitedLine(headerLine, delimiter).length }))
+      .sort((left, right) => right.columns - left.columns)[0].delimiter;
+  }
+
+  function safeRatio(numerator, denominator) {
+    if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
+    return Number((numerator / denominator).toFixed(6));
+  }
+
+  function numericCell(row, column, rowNumber, { required = true } = {}) {
+    const rawValue = row[column];
+    if (rawValue == null || rawValue === "") {
+      if (required) throw new Error(`CSV row ${rowNumber}, column "${column}" is required.`);
+      return null;
+    }
+    const numericValue = Number(rawValue);
+    if (!Number.isFinite(numericValue)) {
+      throw new Error(`CSV row ${rowNumber}, column "${column}" is not numeric.`);
+    }
+    return numericValue;
+  }
+
+  function textCell(row, column, rowNumber) {
+    const rawValue = row[column];
+    if (rawValue == null || rawValue === "") {
+      throw new Error(`CSV row ${rowNumber}, column "${column}" is required.`);
+    }
+    return rawValue;
+  }
+
+  function requireColumns(headers, columns, csvTypeLabel) {
+    const missing = columns.filter((column) => !headers.includes(column));
+    if (missing.length) {
+      throw new Error(`${csvTypeLabel} CSV is missing required columns: ${missing.join(", ")}.`);
+    }
+  }
+
+  function unitCompatibilityValue(activityUnit, factorUnit) {
+    const expected = {
+      kWh: "kgCO2e/kWh",
+      kg: "kgCO2e/kg",
+      km: "kgCO2e/km",
+    }[activityUnit];
+    if (!expected) return null;
+    return factorUnit === expected ? 1.0 : 0.0;
+  }
+
+  function productReferenceRow(row, rowIndex) {
+    const rowNumber = rowIndex + 2;
+    const operating = numericCell(row, "operatingHRS", rowNumber);
+    const brewing = numericCell(row, "brewingCount", rowNumber);
+    const cleaning = numericCell(row, "cleaningCount", rowNumber);
+    const chalk = numericCell(row, "chalkCount", rowNumber);
+    const grinding = numericCell(row, "coffeeGrindingCount", rowNumber);
+    const productWeight = numericCell(row, "product_weightGRM", rowNumber, { required: false });
+    const activePartWeight = numericCell(row, "active_part_weightGRM", rowNumber, { required: false });
+    const materialRatio = numericCell(row, "max_material_weight_to_part_weight", rowNumber, { required: false });
+    const entityId = textCell(row, "entity_id", rowNumber);
+    const features = {
+      operatingHRS: operating,
+      brewingCount: brewing,
+      cleaningCount: cleaning,
+      chalkCount: chalk,
+      coffeeGrindingCount: grinding,
+      cleaning_to_brewing_ratio: safeRatio(cleaning, brewing),
+      chalk_to_brewing_ratio: safeRatio(chalk, brewing),
+      grinding_to_brewing_ratio: safeRatio(grinding, brewing),
+      brews_per_operating_hour: safeRatio(brewing, operating),
+      max_material_weight_to_part_weight: materialRatio,
+      product_weightGRM: productWeight,
+      active_part_weightGRM: activePartWeight,
+      active_part_weight_to_product_weight: safeRatio(activePartWeight, productWeight),
+    };
+
+    return {
+      scope_name: "product",
+      feature_set: "product_usage_graph",
+      entity_id: entityId,
+      entity_type: "UploadedReferenceRow",
+      features: Object.fromEntries(Object.entries(features).filter(([, value]) => value != null)),
+      source_entity_ids: [],
+      missing_features: [],
+      evidence: { upload_format: "product_raw_csv" },
+    };
+  }
+
+  function emissionReferenceRow(row, rowIndex) {
+    const rowNumber = rowIndex + 2;
+    const quantity = numericCell(row, "quantity", rowNumber);
+    const entityId = textCell(row, "entity_id", rowNumber);
+    const activityUnit = textCell(row, "activity_unit", rowNumber);
+    const factorUnit = textCell(row, "factor_unit", rowNumber);
+    const factorValue = numericCell(row, "factor_value", rowNumber);
+    const reported = numericCell(row, "reported_emissions", rowNumber);
+    const expected = quantity * factorValue;
+    const absoluteDeviation = Math.abs(reported - expected);
+    const relativeDeviation = safeRatio(absoluteDeviation, Math.abs(expected));
+    const features = {
+      quantity,
+      factor_value: factorValue,
+      reported_emissions: reported,
+      expected_emissions: Number(expected.toFixed(6)),
+      absolute_calculation_deviation: Number(absoluteDeviation.toFixed(6)),
+      relative_calculation_deviation: relativeDeviation,
+      reported_emissions_per_quantity: safeRatio(reported, quantity),
+      unit_compatible: unitCompatibilityValue(activityUnit, factorUnit),
+    };
+
+    return {
+      scope_name: "emission",
+      feature_set: "emission_calculation_intensity",
+      entity_id: entityId,
+      entity_type: "UploadedReferenceRow",
+      features: Object.fromEntries(Object.entries(features).filter(([, value]) => value != null)),
+      source_entity_ids: [],
+      missing_features: [],
+      evidence: {
+        upload_format: "emission_raw_csv",
+        activity_unit: activityUnit,
+        factor_unit: factorUnit,
+      },
+    };
+  }
+
+  function parseReferenceCsv(content, csvType) {
+    const lines = content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+    if (lines.length < 2) {
+      throw new Error("CSV reference data needs a header and at least one data row.");
+    }
+
+    const delimiter = detectDelimiter(lines[0]);
+    const headers = parseDelimitedLine(lines[0], delimiter);
+    if (csvType === "product") {
+      requireColumns(
+        headers,
+        ["entity_id", "operatingHRS", "brewingCount", "cleaningCount", "chalkCount", "coffeeGrindingCount"],
+        "Product raw usage",
+      );
+    } else {
+      requireColumns(
+        headers,
+        ["entity_id", "quantity", "activity_unit", "factor_value", "factor_unit", "reported_emissions"],
+        "Emission raw calculation",
+      );
+    }
+
+    return lines.slice(1).map((line, rowIndex) => {
+      const values = parseDelimitedLine(line, delimiter);
+      const row = Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
+      return csvType === "product"
+        ? productReferenceRow(row, rowIndex)
+        : emissionReferenceRow(row, rowIndex);
+    });
+  }
+
+  async function readIsolationReferenceFile(file) {
+    if (!file) return;
+    setIsolationReferenceErr(null);
+    setIsolationReferenceFileName(file.name);
+    try {
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        throw new Error("Reference data upload accepts CSV files only.");
+      }
+      const normalizedRows = parseReferenceCsv(await file.text(), isolationReferenceCsvType);
+      setIsolationReferenceRows(normalizedRows);
+      setResult(null);
+    } catch (error) {
+      setIsolationReferenceRows([]);
+      setIsolationReferenceErr(error?.message || String(error));
+    }
+  }
+
+  function isolationOptionsPayload() {
+    const nEstimators = Number(isolationEstimators);
+    const contamination = Number(isolationContamination);
+    const maxSamples = isolationMaxSamples.trim() ? Number(isolationMaxSamples) : null;
+    const randomState = Number(isolationRandomState);
+
+    if (!Number.isInteger(nEstimators) || nEstimators < 10 || nEstimators > 1000) {
+      throw new Error("Isolation Forest n_estimators must be an integer between 10 and 1000.");
+    }
+    if (!Number.isFinite(contamination) || contamination <= 0 || contamination > 0.5) {
+      throw new Error("Isolation Forest contamination must be greater than 0 and at most 0.5.");
+    }
+    if (maxSamples !== null && (!Number.isFinite(maxSamples) || maxSamples <= 0)) {
+      throw new Error("Isolation Forest max_samples must be empty or greater than 0.");
+    }
+    if (!Number.isInteger(randomState)) {
+      throw new Error("Isolation Forest random_state must be an integer.");
+    }
+
+    return {
+      isolation_forest: {
+        enabled: true,
+        n_estimators: nEstimators,
+        contamination,
+        max_samples: maxSamples,
+        random_state: randomState,
+        reference_rows: isolationReferenceRows,
+        reference_description: isolationReferenceRows.length
+          ? `Uploaded reference feature rows from ${isolationReferenceFileName || "local file"}.`
+          : null,
+      },
+    };
+  }
+
   function handleDrop(event) {
     event.preventDefault();
     setIsDragging(false);
@@ -1009,7 +1253,12 @@ export default function DataQualityView() {
 
     setLoading(true);
     try {
-      const response = await api.runDataQuality({ scope, mode, document });
+      const response = await api.runDataQuality({
+        scope,
+        mode,
+        document,
+        anomaly_options: isolationOptionsPayload(),
+      });
       setResult(response);
     } catch (error) {
       setErr(error?.message || String(error));
@@ -1084,6 +1333,16 @@ export default function DataQualityView() {
                   </Form.Select>
                 </Col>
               </Row>
+
+              <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
+                <Button
+                  variant="outline-secondary"
+                  size="sm"
+                  onClick={() => setShowIsolationConfig(true)}
+                >
+                  Isolation Forest configuration
+                </Button>
+              </div>
 
               <div className="mb-3">
                 <Form.Label>Examples</Form.Label>
@@ -1215,6 +1474,172 @@ export default function DataQualityView() {
           </Tabs>
         </Col>
       </Row>
+
+      <Modal show={showIsolationConfig} onHide={() => setShowIsolationConfig(false)} size="lg" centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Isolation Forest Configuration</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <div className="mb-3">
+            <div>
+              <div className="fw-semibold">ML anomaly layer</div>
+              <div className="small text-muted">
+                Configure the local Isolation Forest check for product/emission feature rows.
+              </div>
+            </div>
+          </div>
+
+          <Row className="g-3">
+            <Col xs={12} md={6} lg={3}>
+              <Form.Label className="small mb-1">n_estimators</Form.Label>
+              <Form.Control
+                size="sm"
+                type="number"
+                min="10"
+                max="1000"
+                value={isolationEstimators}
+                onChange={(event) => {
+                  setIsolationEstimators(event.target.value);
+                  setResult(null);
+                }}
+              />
+              <div className="small text-muted">Number of trees in the forest.</div>
+            </Col>
+            <Col xs={12} md={6} lg={3}>
+              <Form.Label className="small mb-1">contamination</Form.Label>
+              <Form.Control
+                size="sm"
+                type="number"
+                min="0.001"
+                max="0.5"
+                step="0.01"
+                value={isolationContamination}
+                onChange={(event) => {
+                  setIsolationContamination(event.target.value);
+                  setResult(null);
+                }}
+              />
+              <div className="small text-muted">Expected outlier share in the reference data.</div>
+            </Col>
+            <Col xs={12} md={6} lg={3}>
+              <Form.Label className="small mb-1">max_samples</Form.Label>
+              <Form.Control
+                size="sm"
+                type="number"
+                min="0.001"
+                step="1"
+                placeholder="default"
+                value={isolationMaxSamples}
+                onChange={(event) => {
+                  setIsolationMaxSamples(event.target.value);
+                  setResult(null);
+                }}
+              />
+              <div className="small text-muted">Empty keeps the built-in default.</div>
+            </Col>
+            <Col xs={12} md={6} lg={3}>
+              <Form.Label className="small mb-1">random_state</Form.Label>
+              <Form.Control
+                size="sm"
+                type="number"
+                step="1"
+                value={isolationRandomState}
+                onChange={(event) => {
+                  setIsolationRandomState(event.target.value);
+                  setResult(null);
+                }}
+              />
+              <div className="small text-muted">Reproducibility seed for repeated runs.</div>
+            </Col>
+          </Row>
+
+          <div className="border-top pt-3 mt-3">
+            <Form.Group className="mb-3">
+              <Form.Label className="small mb-1">Reference CSV type</Form.Label>
+              <Form.Select
+                size="sm"
+                value={isolationReferenceCsvType}
+                onChange={(event) => {
+                  setIsolationReferenceCsvType(event.target.value);
+                  setIsolationReferenceRows([]);
+                  setIsolationReferenceFileName("");
+                  setIsolationReferenceErr(null);
+                  setResult(null);
+                }}
+                style={{ maxWidth: 320 }}
+              >
+                <option value="product">Product raw usage CSV</option>
+                <option value="emission">Emission raw calculation CSV</option>
+              </Form.Select>
+            </Form.Group>
+
+            <Alert variant="secondary" className="py-2">
+              <div className="fw-semibold small">Expected clean CSV format</div>
+              {isolationReferenceCsvType === "product" ? (
+                <div className="small">
+                  Required columns: <code>entity_id</code>, <code>operatingHRS</code>, <code>brewingCount</code>,{" "}
+                  <code>cleaningCount</code>, <code>chalkCount</code>, <code>coffeeGrindingCount</code>.
+                  Optional columns: <code>product_weightGRM</code>, <code>active_part_weightGRM</code>,{" "}
+                  <code>max_material_weight_to_part_weight</code>. The system derives product usage ratios and
+                  product/part weight ratios for the Isolation Forest feature row.
+                </div>
+              ) : (
+                <div className="small">
+                  Required columns: <code>entity_id</code>, <code>quantity</code>, <code>activity_unit</code>,{" "}
+                  <code>factor_value</code>, <code>factor_unit</code>, <code>reported_emissions</code>.
+                  The system derives expected emissions, calculation deviation, emission intensity, and deterministic
+                  unit compatibility for the Isolation Forest feature row.
+                </div>
+              )}
+              <div className="small text-muted mt-1">
+                Column names and units must already be model-conform. This upload does not perform label, enum, or unit
+                harmonization.
+              </div>
+            </Alert>
+
+            <Form.Label className="small mb-1">Reference data CSV</Form.Label>
+            <div className="d-flex flex-wrap align-items-center gap-2">
+              <Form.Control
+                size="sm"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => readIsolationReferenceFile(event.target.files?.[0])}
+                style={{ maxWidth: 320 }}
+              />
+              <Badge bg={isolationReferenceRows.length ? "info" : "secondary"}>
+                {isolationReferenceRows.length
+                  ? `${isolationReferenceRows.length} uploaded rows`
+                  : "No CSV uploaded"}
+              </Badge>
+              {isolationReferenceRows.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline-secondary"
+                  onClick={() => {
+                    setIsolationReferenceRows([]);
+                    setIsolationReferenceFileName("");
+                    setIsolationReferenceErr(null);
+                    setResult(null);
+                  }}
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+            <div className="small text-muted mt-1">
+              Uploaded data is converted into internal feature rows and used only for the current stateless run.
+            </div>
+            {isolationReferenceErr && (
+              <div className="small text-danger mt-1">Reference data error: {isolationReferenceErr}</div>
+            )}
+          </div>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowIsolationConfig(false)}>
+            Close
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       <SummaryModal type={selectedSummary} result={result} onHide={() => setSelectedSummary(null)} />
     </Container>

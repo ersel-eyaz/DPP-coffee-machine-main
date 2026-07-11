@@ -70,6 +70,7 @@ class AnomalyResult:
 
     scope_name: str
     findings: list[AnomalyFinding] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def has_errors(self) -> bool:
         """Return True if any finding has severity 'error'."""

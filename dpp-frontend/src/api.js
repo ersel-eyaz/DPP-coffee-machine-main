@@ -339,7 +339,7 @@ export const api = {
   /**
    * Run the isolated data-quality layer on an external JSON-LD document.
    * Local semantic-model initialization can make the first run noticeably slower.
-   * @param {{scope: "auto"|"product"|"emission"|"service", mode: "harmonization"|"anomaly"|"both", document: any}} body
+   * @param {{scope: "auto"|"product"|"emission"|"service", mode: "harmonization"|"anomaly"|"both", document: any, anomaly_options?: any}} body
    */
   runDataQuality(body) {
     return fetchJSON(

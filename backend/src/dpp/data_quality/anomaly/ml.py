@@ -10,7 +10,7 @@ algorithm.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from statistics import mean, pstdev
 from typing import Any
 
@@ -25,6 +25,34 @@ _MIN_REFERENCE_ROWS = 8
 
 
 @dataclass(frozen=True)
+class IsolationForestConfig:
+    """Runtime configuration for the local Isolation Forest layer."""
+
+    enabled: bool = True
+    n_estimators: int = 100
+    contamination: float = 0.15
+    max_samples: float | int | None = None
+    random_state: int = 42
+
+
+@dataclass(frozen=True)
+class MLAnomalyOptions:
+    """Optional ML runtime options and externally provided reference rows."""
+
+    isolation_forest: IsolationForestConfig = field(default_factory=IsolationForestConfig)
+    reference_rows: list[FeatureRow] | None = None
+    reference_description: str | None = None
+
+
+@dataclass(frozen=True)
+class MLAnomalyAnalysis:
+    """Findings plus report metadata for the ML/statistical anomaly layer."""
+
+    findings: list[AnomalyFinding]
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class _ReferenceProfile:
     """Synthetic reference population for one feature set."""
 
@@ -32,6 +60,8 @@ class _ReferenceProfile:
     feature_set: str
     rows: list[FeatureRow]
     description: str
+    profile_id: str = "synthetic_plausible_batch"
+    source: str = "built_in_default"
 
 
 def _reference_row(scope_name: str, feature_set: str, row_id: str, features: dict[str, float]) -> FeatureRow:
@@ -145,6 +175,29 @@ def _reference_profiles() -> dict[tuple[str, str], _ReferenceProfile]:
     """Return built-in synthetic reference profiles keyed by scope and feature set."""
     profiles = [_product_reference_profile(), _emission_reference_profile()]
     return {(profile.scope_name, profile.feature_set): profile for profile in profiles}
+
+
+def _external_reference_profiles(options: MLAnomalyOptions | None) -> dict[tuple[str, str], _ReferenceProfile]:
+    """Return uploaded reference profiles keyed by scope and feature set."""
+    if not options or not options.reference_rows:
+        return {}
+
+    grouped: dict[tuple[str, str], list[FeatureRow]] = {}
+    for row in options.reference_rows:
+        grouped.setdefault((row.scope_name, row.feature_set), []).append(row)
+
+    description = options.reference_description or "User-provided reference feature rows."
+    return {
+        key: _ReferenceProfile(
+            scope_name=key[0],
+            feature_set=key[1],
+            rows=rows,
+            description=description,
+            profile_id="uploaded_reference_batch",
+            source="user_uploaded",
+        )
+        for key, rows in grouped.items()
+    }
 
 
 def _common_feature_names(target: FeatureRow, reference_rows: list[FeatureRow]) -> list[str]:
@@ -269,14 +322,25 @@ def _format_top_deviations(deviations: list[dict[str, Any]], limit: int = 3) -> 
     return " Top deviating features: " + ", ".join(parts) + "."
 
 
+def _effective_max_samples(config: IsolationForestConfig, reference_count: int) -> int | float:
+    """Return a scikit-learn-compatible max_samples value."""
+    if config.max_samples is None:
+        return min(16, reference_count)
+
+    if isinstance(config.max_samples, float) and config.max_samples <= 1.0:
+        return config.max_samples
+
+    return max(1, min(int(config.max_samples), reference_count))
+
+
 def _isolation_forest_scores(
     reference_rows: list[FeatureRow],
     target_rows: list[FeatureRow],
     feature_names: list[str],
+    config: IsolationForestConfig,
 ) -> tuple[dict[str, float], dict[str, float], dict[str, int], dict[str, Any]]:
     """Train a scikit-learn Isolation Forest and score target rows."""
-    tree_count = 100
-    sample_size = min(16, len(reference_rows))
+    sample_size = _effective_max_samples(config, len(reference_rows))
     reference_matrix = [[row.features[name] for name in feature_names] for row in reference_rows]
     target_matrix = {
         row.entity_id: [row.features[name] for name in feature_names]
@@ -284,10 +348,10 @@ def _isolation_forest_scores(
     }
 
     model = IsolationForest(
-        n_estimators=tree_count,
+        n_estimators=config.n_estimators,
         max_samples=sample_size,
-        contamination=0.15,
-        random_state=42,
+        contamination=config.contamination,
+        random_state=config.random_state,
     )
     model.fit(reference_matrix)
 
@@ -308,9 +372,10 @@ def _isolation_forest_scores(
         "implementation": "sklearn.ensemble.IsolationForest",
         "sklearn_version": sklearn.__version__,
         "decision_strategy": "sklearn_predict",
-        "tree_count": tree_count,
-        "sample_size": sample_size,
-        "contamination": 0.15,
+        "n_estimators": config.n_estimators,
+        "max_samples": sample_size,
+        "contamination": config.contamination,
+        "random_state": config.random_state,
         "reference_score_q85": round(_quantile(reference_scores, 0.85), 6),
         "reference_score_max": round(max(reference_scores), 6),
         "score_samples_direction": "lower native score means more anomalous; reported anomaly_score is sign-inverted",
@@ -337,7 +402,8 @@ def _statistical_finding(
         "check_method": check_method,
         "feature_set": target.feature_set,
         "feature_names": feature_names,
-        "reference_profile": "synthetic_plausible_batch",
+        "reference_profile": reference_profile.profile_id,
+        "reference_source": reference_profile.source,
         "reference_description": reference_profile.description,
         "reference_rows": len(reference_profile.rows),
         "training_rows": len(reference_profile.rows),
@@ -360,7 +426,52 @@ def _statistical_finding(
     )
 
 
-def build_ml_anomaly_findings(rows: list[FeatureRow]) -> list[AnomalyFinding]:
+def _ml_metadata(
+    *,
+    options: MLAnomalyOptions,
+    profiles: dict[tuple[str, str], _ReferenceProfile],
+    rows_by_profile: dict[tuple[str, str], list[FeatureRow]],
+) -> dict[str, Any]:
+    """Return report metadata for the statistical/ML anomaly layer."""
+    visible_profile_keys = set(rows_by_profile)
+    if options.reference_rows:
+        visible_profile_keys.update((row.scope_name, row.feature_set) for row in options.reference_rows)
+
+    return {
+        "statistical_ml": {
+            "isolation_forest": {
+                "enabled": options.isolation_forest.enabled,
+                "implementation": "sklearn.ensemble.IsolationForest",
+                "parameters": {
+                    "n_estimators": options.isolation_forest.n_estimators,
+                    "contamination": options.isolation_forest.contamination,
+                    "max_samples": options.isolation_forest.max_samples,
+                    "random_state": options.isolation_forest.random_state,
+                },
+            },
+            "profiles": [
+                {
+                    "scope_name": profile.scope_name,
+                    "feature_set": profile.feature_set,
+                    "reference_profile": profile.profile_id,
+                    "reference_source": profile.source,
+                    "reference_rows": len(profile.rows),
+                    "target_rows": len(rows_by_profile.get(key, [])),
+                    "usable": len(profile.rows) >= _MIN_REFERENCE_ROWS,
+                    "minimum_reference_rows": _MIN_REFERENCE_ROWS,
+                    "description": profile.description,
+                }
+                for key, profile in sorted(profiles.items())
+                if key in visible_profile_keys
+            ],
+        }
+    }
+
+
+def build_ml_anomaly_analysis(
+    rows: list[FeatureRow],
+    options: MLAnomalyOptions | None = None,
+) -> MLAnomalyAnalysis:
     """
     Score feature rows with statistical baselines and Isolation Forest.
 
@@ -368,7 +479,9 @@ def build_ml_anomaly_findings(rows: list[FeatureRow]) -> list[AnomalyFinding]:
     the method reproducible while making the need for a larger real reference
     population explicit in the report metadata.
     """
+    options = options or MLAnomalyOptions()
     profiles = _reference_profiles()
+    profiles.update(_external_reference_profiles(options))
     findings: list[AnomalyFinding] = []
     rows_by_profile: dict[tuple[str, str], list[FeatureRow]] = {}
     for row in rows:
@@ -376,7 +489,30 @@ def build_ml_anomaly_findings(rows: list[FeatureRow]) -> list[AnomalyFinding]:
 
     for key, target_rows in rows_by_profile.items():
         profile = profiles.get(key)
-        if profile is None or len(profile.rows) < _MIN_REFERENCE_ROWS:
+        if profile is None:
+            continue
+        if len(profile.rows) < _MIN_REFERENCE_ROWS:
+            findings.append(
+                AnomalyFinding(
+                    check_id="ml_reference_batch_too_small",
+                    category="statistical",
+                    severity="info",
+                    message=(
+                        "The statistical/ML reference batch is too small for reliable scoring; "
+                        "Isolation Forest and reference-based statistical checks were skipped for this feature set."
+                    ),
+                    observed_value={"reference_rows": len(profile.rows)},
+                    expected={"minimum_reference_rows": _MIN_REFERENCE_ROWS},
+                    evidence={
+                        "check_method": "reference_batch_validation",
+                        "feature_set": key[1],
+                        "reference_profile": profile.profile_id,
+                        "reference_source": profile.source,
+                        "reference_rows": len(profile.rows),
+                    },
+                    review_action="provide_larger_reference_batch_or_use_default_reference",
+                )
+            )
             continue
 
         for target in target_rows:
@@ -430,10 +566,14 @@ def build_ml_anomaly_findings(rows: list[FeatureRow]) -> list[AnomalyFinding]:
         if not shared_feature_names:
             continue
 
+        if not options.isolation_forest.enabled:
+            continue
+
         scores, decisions, predictions, metadata = _isolation_forest_scores(
             profile.rows,
             target_rows,
             shared_feature_names,
+            options.isolation_forest,
         )
         for target in target_rows:
             score = scores[target.entity_id]
@@ -473,4 +613,15 @@ def build_ml_anomaly_findings(rows: list[FeatureRow]) -> list[AnomalyFinding]:
                 )
             )
 
-    return findings
+    return MLAnomalyAnalysis(
+        findings=findings,
+        metadata=_ml_metadata(options=options, profiles=profiles, rows_by_profile=rows_by_profile),
+    )
+
+
+def build_ml_anomaly_findings(
+    rows: list[FeatureRow],
+    options: MLAnomalyOptions | None = None,
+) -> list[AnomalyFinding]:
+    """Return only ML/statistical findings for callers that do not need metadata."""
+    return build_ml_anomaly_analysis(rows, options=options).findings

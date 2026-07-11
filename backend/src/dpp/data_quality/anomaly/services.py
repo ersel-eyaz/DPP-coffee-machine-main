@@ -12,7 +12,7 @@ from dataclasses import asdict
 from typing import Any
 
 from dpp.data_quality.anomaly.features import extract_feature_rows
-from dpp.data_quality.anomaly.ml import build_ml_anomaly_findings
+from dpp.data_quality.anomaly.ml import MLAnomalyOptions, build_ml_anomaly_analysis
 from dpp.data_quality.anomaly.profiles import ProductProfileMatch, resolve_product_profile
 from dpp.data_quality.anomaly.rules import (
     EMISSION_NUMERIC_RANGE_RULES,
@@ -1042,7 +1042,10 @@ def _service_part_references(entity: HarmonizedEntity) -> list[str]:
     return references
 
 
-def analyze_harmonization_result(result: HarmonizationResult) -> AnomalyResult:
+def analyze_harmonization_result(
+    result: HarmonizationResult,
+    ml_options: MLAnomalyOptions | None = None,
+) -> AnomalyResult:
     """
     Build plausibility/anomaly indicators from a harmonization result.
 
@@ -1073,11 +1076,13 @@ def analyze_harmonization_result(result: HarmonizationResult) -> AnomalyResult:
         findings.extend(_apply_numeric_range_rules(result, SERVICE_NUMERIC_RANGE_RULES))
         findings.extend(_apply_service_semantic_checks(result))
 
-    findings.extend(build_ml_anomaly_findings(extract_feature_rows(result)))
+    ml_analysis = build_ml_anomaly_analysis(extract_feature_rows(result), options=ml_options)
+    findings.extend(ml_analysis.findings)
 
     return AnomalyResult(
         scope_name=result.scope_name,
         findings=findings,
+        metadata=ml_analysis.metadata,
     )
 
 

@@ -9,6 +9,8 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from dpp.data_quality.anomaly.features import FeatureRow
+from dpp.data_quality.anomaly.ml import IsolationForestConfig, MLAnomalyOptions
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.schemas import AnomalyResult
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
@@ -62,6 +64,39 @@ class DataQualityRunRequest(BaseModel):
         default_factory=dict,
         description="Optional caller-provided context for review-only checks, e.g. selected service part label.",
     )
+    anomaly_options: "DataQualityAnomalyOptions" = Field(
+        default_factory=lambda: DataQualityAnomalyOptions(),
+        description="Optional configuration for statistical/ML anomaly checks.",
+    )
+
+
+class DataQualityTrainingFeatureRow(BaseModel):
+    scope_name: Optional[str] = None
+    feature_set: str
+    entity_id: Optional[str] = None
+    entity_type: str = "UploadedReferenceRow"
+    features: Dict[str, float]
+    source_entity_ids: List[str] = Field(default_factory=list)
+    missing_features: List[str] = Field(default_factory=list)
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DataQualityIsolationForestOptions(BaseModel):
+    enabled: bool = True
+    n_estimators: int = Field(100, ge=10, le=1000)
+    contamination: float = Field(0.15, gt=0.0, le=0.5)
+    max_samples: Optional[float] = Field(
+        None,
+        gt=0.0,
+        description="None keeps the built-in default. Values <= 1 are treated as fractions; values > 1 as row counts.",
+    )
+    random_state: int = 42
+    reference_rows: List[DataQualityTrainingFeatureRow] = Field(default_factory=list)
+    reference_description: Optional[str] = None
+
+
+class DataQualityAnomalyOptions(BaseModel):
+    isolation_forest: DataQualityIsolationForestOptions = Field(default_factory=DataQualityIsolationForestOptions)
 
 
 class ServiceTextFeedbackRequest(BaseModel):
@@ -206,6 +241,51 @@ def _detect_scope(document: Dict[str, Any]) -> str:
     raise HTTPException(
         status_code=400,
         detail="Could not auto-detect scope from entity types. Please choose product, emission, or service.",
+    )
+
+
+def _ml_options_from_request(request: DataQualityRunRequest, scope_name: str) -> MLAnomalyOptions:
+    """Convert request-level anomaly options into the internal ML options object."""
+    isolation = request.anomaly_options.isolation_forest
+    reference_rows: List[FeatureRow] = []
+    for index, row in enumerate(isolation.reference_rows, start=1):
+        row_scope = row.scope_name or scope_name
+        if row_scope != scope_name:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Uploaded Isolation Forest reference rows must match the selected scope. "
+                    f"Row {index} has scope {row_scope!r}, selected scope is {scope_name!r}."
+                ),
+            )
+        if not row.features:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Uploaded Isolation Forest reference row {index} has no numeric features.",
+            )
+        reference_rows.append(
+            FeatureRow(
+                scope_name=row_scope,
+                feature_set=row.feature_set,
+                entity_id=row.entity_id or f"uploaded-reference-{index:03d}",
+                entity_type=row.entity_type,
+                features={key: float(value) for key, value in row.features.items()},
+                source_entity_ids=row.source_entity_ids,
+                missing_features=row.missing_features,
+                evidence={**row.evidence, "reference_source": "user_uploaded"},
+            )
+        )
+
+    return MLAnomalyOptions(
+        isolation_forest=IsolationForestConfig(
+            enabled=isolation.enabled,
+            n_estimators=isolation.n_estimators,
+            contamination=isolation.contamination,
+            max_samples=isolation.max_samples,
+            random_state=isolation.random_state,
+        ),
+        reference_rows=reference_rows or None,
+        reference_description=isolation.reference_description,
     )
 
 
@@ -463,7 +543,12 @@ async def run_data_quality(request: DataQualityRunRequest) -> Dict[str, Any]:
 
     if request.mode in {"anomaly", "both"}:
         try:
-            anomaly_result = analyze_harmonization_result(result)
+            anomaly_result = analyze_harmonization_result(
+                result,
+                ml_options=_ml_options_from_request(request, scope_name),
+            )
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Anomaly analysis failed: {exc}") from exc
 

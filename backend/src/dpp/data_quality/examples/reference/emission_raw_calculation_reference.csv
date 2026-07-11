@@ -1,0 +1,11 @@
+entity_id,quantity,activity_unit,factor_value,factor_unit,reported_emissions
+emission-reference-upload-001,8,kWh,0.18,kgCO2e/kWh,1.44
+emission-reference-upload-002,12,kWh,0.22,kgCO2e/kWh,2.64
+emission-reference-upload-003,18,kWh,0.28,kgCO2e/kWh,5.04
+emission-reference-upload-004,24,kWh,0.31,kgCO2e/kWh,7.44
+emission-reference-upload-005,35,kWh,0.37,kgCO2e/kWh,12.95
+emission-reference-upload-006,48,kWh,0.43,kgCO2e/kWh,20.64
+emission-reference-upload-007,60,kWh,0.51,kgCO2e/kWh,30.6
+emission-reference-upload-008,75,kWh,0.58,kgCO2e/kWh,43.5
+emission-reference-upload-009,90,kWh,0.66,kgCO2e/kWh,59.4
+emission-reference-upload-010,115,kWh,0.74,kgCO2e/kWh,85.1

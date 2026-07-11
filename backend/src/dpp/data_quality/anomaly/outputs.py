@@ -39,8 +39,11 @@ def build_anomaly_report(result: AnomalyResult) -> dict[str, Any]:
     The report keeps findings explicit so the thesis can discuss each indicator
     as a review aid rather than an automatic correction.
     """
-    return {
+    report = {
         "scope_name": result.scope_name,
         "summary": _build_summary(result),
         "findings": [finding_as_dict(finding) for finding in result.findings],
     }
+    if result.metadata:
+        report["metadata"] = result.metadata
+    return report
