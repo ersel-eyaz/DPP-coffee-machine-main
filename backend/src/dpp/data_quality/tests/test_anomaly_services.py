@@ -24,6 +24,29 @@ def _field(path: str, value: object) -> HarmonizedField:
 
 
 class AnomalyServiceTests(unittest.TestCase):
+    def test_replace_service_step_without_new_part_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "replace-001",
+                    "@type": "dpp:ReplaceServiceStep",
+                    "diagnose": "worn grinder burrs",
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        anomaly = analyze_harmonization_result(result)
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "missing_required_embedded_object"
+        )
+
+        self.assertEqual("ReplaceServiceStep.newPart", finding.relation_path)
+        self.assertEqual("warning", finding.severity)
+
     def test_emission_missing_children_are_reported_as_embedded_objects(self) -> None:
         result = HarmonizationResult(
             scope_name="emission",

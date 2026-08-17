@@ -87,7 +87,7 @@ SERVICE_SCOPE = ScopeDefinition(
             relation_name="newPart",
             target_entity_type="PartInstance",
             representation="embedded",
-            required=False,
+            required=True,
             description="Replacement part instance introduced by a replace service step.",
         ),
         CanonicalRelation(
