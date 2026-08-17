@@ -46,8 +46,6 @@ class VocabularyAliasTests(unittest.TestCase):
         expected_paths = {
             ("product name", "DPPStatic"): "DPPStatic.name",
             ("product category", "DPPStatic"): "DPPStatic.productClass",
-            ("modular part", "PartInstance"): "PartInstance.isModular",
-            ("fail state", "PartInstance"): "PartInstance.hasFailstate",
         }
 
         for (label, entity_type), expected_path in expected_paths.items():

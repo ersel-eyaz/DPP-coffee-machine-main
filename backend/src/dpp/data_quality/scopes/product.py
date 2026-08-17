@@ -29,7 +29,7 @@ PRODUCT_SCOPE = ScopeDefinition(
         "MaterialInstance",
     ),
     fields=(
-        # DPPStatic identity/context fields used by optional product profiles.
+        # DPPStatic identity and product-family context.
         CanonicalField(
             entity_type="DPPStatic",
             field_name="name",
@@ -40,7 +40,7 @@ PRODUCT_SCOPE = ScopeDefinition(
             entity_type="DPPStatic",
             field_name="productClass",
             role="analysis_context",
-            description="Product class used as broad context for plausibility checks.",
+            description="Product class preserved as model-near product-family context.",
         ),
 
         # DPPStatic physical fields
@@ -163,19 +163,6 @@ PRODUCT_SCOPE = ScopeDefinition(
             description="Number of coffee grinding cycles.",
         ),
 
-        # Context fields used only if present in canonical form.
-        CanonicalField(
-            entity_type="PartInstance",
-            field_name="isModular",
-            role="analysis_context",
-            description="Optional context for product and part plausibility.",
-        ),
-        CanonicalField(
-            entity_type="PartInstance",
-            field_name="hasFailstate",
-            role="analysis_context",
-            description="Optional condition context; field name follows prototype code.",
-        ),
     ),
     relations=(
         CanonicalRelation(

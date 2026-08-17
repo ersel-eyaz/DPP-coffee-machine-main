@@ -40,8 +40,8 @@ def _service_action_context_fields(entity_type: str) -> tuple[CanonicalField, ..
             field_name=field_name,
             role="analysis_context",
             description=(
-                "Service action target or replacement context preserved for later "
-                "part-aware free-text harmonization and anomaly detection."
+                "Service action target or replacement context preserved for "
+                "part-aware review and anomaly assessment."
             ),
         )
         for field_name in _SERVICE_ACTION_CONTEXT_FIELDS.get(entity_type, ())
