@@ -15,12 +15,12 @@ from difflib import SequenceMatcher
 from typing import Any, Literal
 
 from dpp.data_quality.harmonization.feedback import LearnedServiceTextMapping
+from dpp.data_quality.harmonization.free_text import TextNormalizationError, resolve_text_value
 from dpp.data_quality.harmonization.service_concepts import (
     TEXT_CONCEPTS_BY_KIND,
     TextConcept,
     TextConceptKind,
 )
-
 
 ObservationSource = Literal["learned_feedback", "unresolved_observation"]
 
@@ -38,6 +38,9 @@ class ServiceTextObservation:
     field_path: str | None = None
     service_type: str | None = None
     part_label: str | None = None
+    instance_id: str | None = None
+    service_step_id: str | None = None
+    part_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -122,6 +125,91 @@ class CandidateConceptEvidenceReport:
         }
 
 
+@dataclass(frozen=True)
+class HistoricalServiceTextRecord:
+    """One persisted raw service-text occurrence with record provenance."""
+
+    observation_id: str
+    kind: TextConceptKind
+    text: str
+    canonical_value: str | None = None
+    field_path: str | None = None
+    service_type: str | None = None
+    part_label: str | None = None
+    instance_id: str | None = None
+    service_step_id: str | None = None
+    part_id: str | None = None
+
+
+@dataclass(frozen=True)
+class HistoricalObservationSelection:
+    """Result of re-evaluating persisted raw service text for candidate evidence."""
+
+    unresolved_observations: tuple[ServiceTextObservation, ...]
+    inspected_count: int
+    resolved_count: int
+    learned_feedback_count: int
+
+
+def select_unresolved_historical_observations(
+    records: tuple[HistoricalServiceTextRecord, ...] | list[HistoricalServiceTextRecord],
+    learned_mappings: tuple[LearnedServiceTextMapping, ...] | list[LearnedServiceTextMapping],
+    *,
+    enable_semantic: bool = True,
+) -> HistoricalObservationSelection:
+    """Re-evaluate historical originals and keep only unresolved/ambiguous evidence.
+
+    Learned feedback remains review-only and is therefore not an automatic
+    normalization rule. A historical occurrence is excluded as learned evidence
+    only when its stored canonical value and original text match an approved
+    mapping; this prevents that persisted occurrence from also being counted as
+    unresolved evidence.
+    """
+    unresolved: list[ServiceTextObservation] = []
+    inspected_count = 0
+    resolved_count = 0
+    learned_feedback_count = 0
+
+    for record in records:
+        text = " ".join(record.text.strip().split())
+        if not text:
+            continue
+        inspected_count += 1
+
+        try:
+            resolved = resolve_text_value(record.kind, text, enable_semantic=enable_semantic)
+        except TextNormalizationError:
+            resolved = None
+        if resolved is not None:
+            resolved_count += 1
+            continue
+
+        if _matches_applied_learned_mapping(record, learned_mappings):
+            learned_feedback_count += 1
+            continue
+
+        unresolved.append(
+            unresolved_service_observation(
+                observation_id=record.observation_id,
+                kind=record.kind,
+                text=text,
+                field_path=record.field_path,
+                service_type=record.service_type,
+                part_label=record.part_label,
+                instance_id=record.instance_id,
+                service_step_id=record.service_step_id,
+                part_id=record.part_id,
+            )
+        )
+
+    return HistoricalObservationSelection(
+        unresolved_observations=tuple(unresolved),
+        inspected_count=inspected_count,
+        resolved_count=resolved_count,
+        learned_feedback_count=learned_feedback_count,
+    )
+
+
 def observations_from_learned_feedback(
     mappings: tuple[LearnedServiceTextMapping, ...] | list[LearnedServiceTextMapping],
 ) -> tuple[ServiceTextObservation, ...]:
@@ -153,6 +241,9 @@ def unresolved_service_observation(
     field_path: str | None = None,
     service_type: str | None = None,
     part_label: str | None = None,
+    instance_id: str | None = None,
+    service_step_id: str | None = None,
+    part_id: str | None = None,
 ) -> ServiceTextObservation:
     """Create an unresolved/ambiguous service-text observation for reporting."""
     return ServiceTextObservation(
@@ -163,7 +254,38 @@ def unresolved_service_observation(
         field_path=field_path,
         service_type=service_type,
         part_label=part_label,
+        instance_id=instance_id,
+        service_step_id=service_step_id,
+        part_id=part_id,
     )
+
+
+def _matches_applied_learned_mapping(
+    record: HistoricalServiceTextRecord,
+    mappings: tuple[LearnedServiceTextMapping, ...] | list[LearnedServiceTextMapping],
+) -> bool:
+    canonical_key = _normalized_text_key(record.canonical_value or "")
+    if not canonical_key:
+        return False
+
+    text_key = _normalized_text_key(record.text)
+    for mapping in mappings:
+        if mapping.kind != record.kind:
+            continue
+        if canonical_key != _normalized_text_key(mapping.concept_id):
+            continue
+        mapping_text_keys = {
+            _normalized_text_key(mapping.original_value),
+            _normalized_text_key(mapping.surface_form),
+        }
+        if text_key in mapping_text_keys:
+            return True
+    return False
+
+
+def _normalized_text_key(value: str) -> str:
+    cleaned = value.strip().lower().replace("_", " ").replace("-", " ")
+    return " ".join(cleaned.split())
 
 
 def build_candidate_concept_evidence_report(

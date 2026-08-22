@@ -5,8 +5,10 @@ from __future__ import annotations
 import unittest
 
 from dpp.data_quality.harmonization.candidate_concepts import (
+    HistoricalServiceTextRecord,
     build_candidate_concept_evidence_report,
     observations_from_learned_feedback,
+    select_unresolved_historical_observations,
     unresolved_service_observation,
 )
 from dpp.data_quality.harmonization.feedback import LearnedServiceTextMapping
@@ -117,6 +119,76 @@ class CandidateConceptEvidenceReportTests(unittest.TestCase):
         self.assertIsNotNone(quality["mean_intra_cluster_similarity"])
         self.assertIsNotNone(quality["approximate_silhouette"])
         self.assertIn("not a validated performance score", quality["metric_note"])
+
+    def test_historical_selection_rechecks_resolved_and_keeps_unresolved_with_provenance(self) -> None:
+        selection = select_unresolved_historical_observations(
+            (
+                HistoricalServiceTextRecord(
+                    observation_id="resolved-001",
+                    kind="symptom",
+                    text="water leak",
+                    canonical_value="water_leakage",
+                ),
+                HistoricalServiceTextRecord(
+                    observation_id="unresolved-001",
+                    kind="diagnosis",
+                    text="unmapped hydraulic resonance qzvx",
+                    canonical_value="unmapped hydraulic resonance qzvx",
+                    field_path="RepairServiceStep.diagnose",
+                    service_type="RepairServiceStep",
+                    instance_id="instance-001",
+                    service_step_id="part-001:partProcessTracking:2",
+                    part_id="part-002",
+                ),
+            ),
+            (),
+            enable_semantic=False,
+        )
+
+        self.assertEqual(2, selection.inspected_count)
+        self.assertEqual(1, selection.resolved_count)
+        self.assertEqual(0, selection.learned_feedback_count)
+        self.assertEqual(1, len(selection.unresolved_observations))
+        observation = selection.unresolved_observations[0]
+        self.assertEqual("instance-001", observation.instance_id)
+        self.assertEqual("part-001:partProcessTracking:2", observation.service_step_id)
+        self.assertEqual("part-002", observation.part_id)
+
+    def test_historical_selection_does_not_double_count_applied_learned_feedback(self) -> None:
+        mapping = LearnedServiceTextMapping(
+            feedback_id="feedback-001",
+            kind="diagnosis",
+            field_path="RepairServiceStep.diagnose",
+            original_value="rare hydraulic pulse qzvx",
+            concept_id="pump_fault",
+            surface_form="rare hydraulic pulse qzvx",
+        )
+        selection = select_unresolved_historical_observations(
+            (
+                HistoricalServiceTextRecord(
+                    observation_id="learned-001",
+                    kind="diagnosis",
+                    text="rare hydraulic pulse qzvx",
+                    canonical_value="pump_fault",
+                ),
+                HistoricalServiceTextRecord(
+                    observation_id="still-unresolved-001",
+                    kind="diagnosis",
+                    text="rare hydraulic pulse qzvx",
+                    canonical_value="rare hydraulic pulse qzvx",
+                ),
+            ),
+            (mapping,),
+            enable_semantic=False,
+        )
+
+        self.assertEqual(2, selection.inspected_count)
+        self.assertEqual(0, selection.resolved_count)
+        self.assertEqual(1, selection.learned_feedback_count)
+        self.assertEqual(
+            ("still-unresolved-001",),
+            tuple(item.observation_id for item in selection.unresolved_observations),
+        )
 
 
 if __name__ == "__main__":

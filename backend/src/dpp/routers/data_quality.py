@@ -10,11 +10,18 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dpp.data_quality.anomaly.features import FeatureRow
+from dpp.data_quality.anomaly.llm_review import build_service_llm_review_findings
 from dpp.data_quality.anomaly.ml import IsolationForestConfig, MLAnomalyOptions
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.schemas import AnomalyResult
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
-from dpp.data_quality.anomaly.llm_review import build_service_llm_review_findings
+from dpp.data_quality.harmonization.candidate_concepts import (
+    HistoricalServiceTextRecord,
+    build_candidate_concept_evidence_report,
+    observations_from_learned_feedback,
+    select_unresolved_historical_observations,
+    unresolved_service_observation,
+)
 from dpp.data_quality.harmonization.feedback import (
     append_feedback_record,
     approve_feedback_proposal,
@@ -22,17 +29,13 @@ from dpp.data_quality.harmonization.feedback import (
     learned_mapping_from_feedback,
     load_learned_service_text_mappings,
 )
-from dpp.data_quality.harmonization.candidate_concepts import (
-    build_candidate_concept_evidence_report,
-    observations_from_learned_feedback,
-    unresolved_service_observation,
-)
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.parser import ParseError, parse_jsonld_document
-from dpp.data_quality.harmonization.services import harmonize_document
 from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID, TEXT_CONCEPTS_BY_KIND
+from dpp.data_quality.harmonization.services import harmonize_document
 from dpp.data_quality.scopes import SUPPORTED_SCOPES
-
+from dpp.models.dpp import DPPInstance
+from dpp.models.processstep import SecondaryValueStep
 
 DataQualityScope = Literal["auto", "product", "emission", "service"]
 DataQualityMode = Literal["harmonization", "anomaly", "both"]
@@ -124,6 +127,10 @@ class ServiceTextCandidateObservationRequest(BaseModel):
 
 
 class ServiceConceptCandidateReportRequest(BaseModel):
+    selected_instance_id: Optional[str] = Field(
+        None,
+        description="Selected DPP instance used to collect historical service text from the same exact DPPStatic.",
+    )
     unresolved_observations: List[ServiceTextCandidateObservationRequest] = Field(default_factory=list)
     cluster_similarity_threshold: float = Field(
         0.72,
@@ -149,6 +156,126 @@ class CandidateMetricInterpretationRequest(BaseModel):
 
 
 router = APIRouter()
+
+
+def _service_step_type(step: Any) -> str:
+    value = getattr(step, "type_", None) or getattr(step, "type", None)
+    return str(value) if value else step.__class__.__name__
+
+
+def _service_target_part_ids(step: Any) -> tuple[str, ...]:
+    targets: list[str] = []
+    for field_name in ("repairedPartId", "replacedPartId", "cleanedPartId"):
+        value = getattr(step, field_name, None)
+        if value:
+            targets.append(str(value))
+    for field_name in ("repairedPartIds", "cleanedPartIds"):
+        for value in getattr(step, field_name, None) or []:
+            if value:
+                targets.append(str(value))
+    for replacement in getattr(step, "replacedAndNewParts", None) or []:
+        if isinstance(replacement, (list, tuple)) and replacement and replacement[0]:
+            targets.append(str(replacement[0]))
+    return tuple(dict.fromkeys(targets))
+
+
+def _part_tree_nodes(root: Any) -> tuple[Any, ...]:
+    nodes: list[Any] = []
+    pending = [root]
+    seen: set[str] = set()
+    while pending:
+        node = pending.pop()
+        node_id = str(getattr(node, "id", "") or id(node))
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        nodes.append(node)
+        pending.extend(getattr(node, "compositeParts", None) or [])
+        pending.extend(getattr(node, "historyOfDetachedParts", None) or [])
+    return tuple(nodes)
+
+
+def _historical_service_text_records(instances: List[DPPInstance]) -> list[HistoricalServiceTextRecord]:
+    records: list[HistoricalServiceTextRecord] = []
+    for instance in instances:
+        instance_id = str(instance.id)
+        root = getattr(instance, "partInstanceLink", None)
+        if root is None:
+            continue
+        for part in _part_tree_nodes(root):
+            part_id = str(getattr(part, "id", "") or "") or None
+            for step_index, step in enumerate(getattr(part, "partProcessTracking", None) or []):
+                if not isinstance(step, SecondaryValueStep):
+                    continue
+                service_type = _service_step_type(step)
+                service_step_id = f"{part_id or 'part'}:partProcessTracking:{step_index}"
+                target_ids = _service_target_part_ids(step)
+                target_part_id = target_ids[0] if target_ids else part_id
+
+                original_diagnose = getattr(step, "originalDiagnose", None)
+                if isinstance(original_diagnose, str) and original_diagnose.strip():
+                    records.append(
+                        HistoricalServiceTextRecord(
+                            observation_id=f"historical:{instance_id}:{service_step_id}:diagnose",
+                            kind="diagnosis",
+                            text=original_diagnose,
+                            canonical_value=str(getattr(step, "diagnose", "") or "") or None,
+                            field_path=f"{service_type}.diagnose",
+                            service_type=service_type,
+                            instance_id=instance_id,
+                            service_step_id=service_step_id,
+                            part_id=target_part_id,
+                        )
+                    )
+
+                original_symptoms = getattr(step, "originalObservedSymptoms", None) or []
+                canonical_symptoms = getattr(step, "observedSymptoms", None) or []
+                if isinstance(original_symptoms, str):
+                    original_symptoms = [original_symptoms]
+                if isinstance(canonical_symptoms, str):
+                    canonical_symptoms = [canonical_symptoms]
+                for symptom_index, original_symptom in enumerate(original_symptoms):
+                    if not isinstance(original_symptom, str) or not original_symptom.strip():
+                        continue
+                    canonical_value = (
+                        str(canonical_symptoms[symptom_index])
+                        if symptom_index < len(canonical_symptoms)
+                        else None
+                    )
+                    records.append(
+                        HistoricalServiceTextRecord(
+                            observation_id=(
+                                f"historical:{instance_id}:{service_step_id}:observedSymptoms:{symptom_index}"
+                            ),
+                            kind="symptom",
+                            text=original_symptom,
+                            canonical_value=canonical_value,
+                            field_path=f"{service_type}.observedSymptoms",
+                            service_type=service_type,
+                            instance_id=instance_id,
+                            service_step_id=service_step_id,
+                            part_id=target_part_id,
+                        )
+                    )
+    return records
+
+
+async def _same_model_instances(selected_instance_id: str) -> List[DPPInstance]:
+    selected = await DPPInstance.get(
+        selected_instance_id,
+        fetch_links=["dppStaticLink", "partInstanceLink"],
+    )
+    if selected is None:
+        raise HTTPException(status_code=404, detail=f"DPPInstance {selected_instance_id} not found")
+
+    dpp_static_id = getattr(getattr(selected, "dppStaticLink", None), "id", None)
+    if dpp_static_id is None:
+        raise HTTPException(status_code=422, detail="Selected DPPInstance has no resolvable dppStaticLink")
+
+    return await DPPInstance.find(
+        DPPInstance.dppStaticLink.id == dpp_static_id,
+        fetch_links=["partInstanceLink"],
+    ).to_list()
 
 EXAMPLE_DOCUMENTS: Dict[str, Dict[str, str]] = {
     "product_dirty": {
@@ -395,7 +522,18 @@ async def create_service_text_feedback(request: ServiceTextFeedbackRequest) -> D
 @router.post("/service-concept-candidates")
 async def build_service_concept_candidate_report(request: ServiceConceptCandidateReportRequest) -> Dict[str, Any]:
     """Build a review-only service concept candidate evidence report."""
-    learned_observations = observations_from_learned_feedback(load_learned_service_text_mappings())
+    learned_mappings = load_learned_service_text_mappings()
+    learned_observations = observations_from_learned_feedback(learned_mappings)
+    historical_selection = None
+    same_model_instance_count = 0
+    if request.selected_instance_id:
+        same_model_instances = await _same_model_instances(request.selected_instance_id)
+        same_model_instance_count = len(same_model_instances)
+        historical_selection = select_unresolved_historical_observations(
+            _historical_service_text_records(same_model_instances),
+            learned_mappings,
+        )
+
     unresolved_observations = []
     for index, observation in enumerate(request.unresolved_observations, start=1):
         text = observation.text.strip()
@@ -413,12 +551,25 @@ async def build_service_concept_candidate_report(request: ServiceConceptCandidat
         )
 
     report = build_candidate_concept_evidence_report(
-        (*learned_observations, *unresolved_observations),
+        (
+            *learned_observations,
+            *(historical_selection.unresolved_observations if historical_selection else ()),
+            *unresolved_observations,
+        ),
         cluster_similarity_threshold=request.cluster_similarity_threshold,
     )
     payload = report.as_dict()
     payload["sources"] = {
         "learned_feedback_observations": len(learned_observations),
+        "same_model_instances": same_model_instance_count,
+        "historical_original_observations": historical_selection.inspected_count if historical_selection else 0,
+        "historical_resolved_observations": historical_selection.resolved_count if historical_selection else 0,
+        "historical_learned_observations": historical_selection.learned_feedback_count
+        if historical_selection
+        else 0,
+        "historical_unresolved_observations": len(historical_selection.unresolved_observations)
+        if historical_selection
+        else 0,
         "request_unresolved_observations": len(unresolved_observations),
     }
     return payload

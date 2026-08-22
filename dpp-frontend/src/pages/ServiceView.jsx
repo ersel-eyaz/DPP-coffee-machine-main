@@ -691,6 +691,7 @@ export default function ServiceView() {
     setMetricExplanationErr(null);
     try {
       const report = await api.buildServiceConceptCandidateReport({
+        selected_instance_id: instanceId,
         unresolved_observations: buildCandidateReportUnresolvedObservations(),
         cluster_similarity_threshold: 0.72,
       });
@@ -814,7 +815,7 @@ export default function ServiceView() {
             <Card.Body>
               {!candidateReport && !candidateReportErr && (
                 <div className="text-muted small">
-                  Clusters approved learned feedback and unresolved service text for controlled vocabulary review. It does not update the core registry.
+                  Clusters approved learned feedback, unresolved service history from devices of the same exact model, and current unresolved input for controlled vocabulary review. It does not update the core registry.
                 </div>
               )}
               {candidateReportErr && <Alert variant="danger" className="py-2 mb-0">{candidateReportErr}</Alert>}
@@ -1553,6 +1554,7 @@ function CandidateConceptReportSummary({
           Singletons {quality.singleton_clusters_total ?? 0}
         </Badge>
         <Badge bg="info">Learned {sources.learned_feedback_observations ?? 0}</Badge>
+        <Badge bg="info">Historical unresolved {sources.historical_unresolved_observations ?? 0}</Badge>
         <Badge bg="info">Current unresolved {sources.request_unresolved_observations ?? 0}</Badge>
       </div>
 
