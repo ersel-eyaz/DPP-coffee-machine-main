@@ -111,10 +111,6 @@ class ServiceTextFeedbackRequest(BaseModel):
         None,
         description="Optional surface form. Defaults to original_value.",
     )
-    rationale: Optional[str] = Field(
-        None,
-        description="Optional non-verified prototype review rationale.",
-    )
 
 
 class ServiceTextCandidateObservationRequest(BaseModel):
@@ -502,12 +498,10 @@ async def create_service_text_feedback(request: ServiceTextFeedbackRequest) -> D
         concept_id=concept.concept_id,
         proposed_surface_form=(request.proposed_surface_form or original_value).strip(),
         reviewer="prototype_review",
-        rationale=request.rationale or "Added through the service quality feedback UI.",
     )
     approved = approve_feedback_proposal(
         proposal,
         reviewer="prototype_review",
-        rationale=request.rationale or "Added through the service quality feedback UI.",
     )
     stored = append_feedback_record(approved)
     mapping = learned_mapping_from_feedback(stored)

@@ -502,7 +502,6 @@ export default function ServiceView() {
           original_value: entry.original_value,
           concept_id: entry.concept_id,
           proposed_surface_form: entry.original_value,
-          rationale: "Added through the service quality feedback UI after saving the service record.",
         })
       ));
       return { ok: true, count: entriesToStore.length };

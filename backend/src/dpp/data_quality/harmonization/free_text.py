@@ -299,8 +299,6 @@ def _learned_mapping_embedding_text(mapping: LearnedServiceTextMapping) -> str:
     parts = [mapping.surface_form]
     if mapping.original_value != mapping.surface_form:
         parts.append(mapping.original_value)
-    if mapping.rationale:
-        parts.append(mapping.rationale)
     return ". ".join(part for part in parts if part)
 
 

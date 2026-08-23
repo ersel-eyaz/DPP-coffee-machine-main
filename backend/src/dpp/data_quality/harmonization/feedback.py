@@ -53,7 +53,6 @@ class HarmonizationFeedbackProposal:
     proposed_service_type: str | None = None
     proposed_part_keywords: tuple[str, ...] = ()
     reviewer: str | None = None
-    rationale: str | None = None
     source: str = "manual_review"
     created_at_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -79,7 +78,6 @@ class LearnedServiceTextMapping:
     status: FeedbackStatus = "approved"
     source: str = "manual_review"
     created_at_utc: str | None = None
-    rationale: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Return a compact JSON-serializable representation."""
@@ -102,7 +100,6 @@ def create_feedback_proposal(
     proposed_service_type: str | None = None,
     proposed_part_keywords: tuple[str, ...] = (),
     reviewer: str | None = None,
-    rationale: str | None = None,
 ) -> HarmonizationFeedbackProposal:
     """Create a proposed feedback record without changing canonical registries."""
     return HarmonizationFeedbackProposal(
@@ -118,7 +115,6 @@ def create_feedback_proposal(
         proposed_service_type=proposed_service_type,
         proposed_part_keywords=proposed_part_keywords,
         reviewer=reviewer,
-        rationale=rationale,
     )
 
 
@@ -155,7 +151,6 @@ def learned_mapping_from_feedback(
         surface_form=surface_form,
         source=proposal.source if proposal.source != "user_feedback" else "manual_review",
         created_at_utc=proposal.created_at_utc,
-        rationale=proposal.rationale,
     )
 
 
@@ -163,7 +158,6 @@ def approve_feedback_proposal(
     proposal: HarmonizationFeedbackProposal,
     *,
     reviewer: str,
-    rationale: str | None = None,
 ) -> HarmonizationFeedbackProposal:
     """Return an approved copy of a feedback proposal."""
     return HarmonizationFeedbackProposal(
@@ -171,7 +165,6 @@ def approve_feedback_proposal(
             **asdict(proposal),
             "status": "approved",
             "reviewer": reviewer,
-            "rationale": rationale if rationale is not None else proposal.rationale,
         }
     )
 
@@ -180,7 +173,6 @@ def reject_feedback_proposal(
     proposal: HarmonizationFeedbackProposal,
     *,
     reviewer: str,
-    rationale: str | None = None,
 ) -> HarmonizationFeedbackProposal:
     """Return a rejected copy of a feedback proposal."""
     return HarmonizationFeedbackProposal(
@@ -188,7 +180,6 @@ def reject_feedback_proposal(
             **asdict(proposal),
             "status": "rejected",
             "reviewer": reviewer,
-            "rationale": rationale if rationale is not None else proposal.rationale,
         }
     )
 
@@ -347,7 +338,6 @@ def _proposal_from_record(record: dict[str, Any]) -> HarmonizationFeedbackPropos
             proposed_service_type=_optional_str(record.get("proposed_service_type")),
             proposed_part_keywords=tuple(str(item) for item in record.get("proposed_part_keywords", ())),
             reviewer=_optional_str(record.get("reviewer")),
-            rationale=_optional_str(record.get("rationale")),
             source=str(record.get("source") or "manual_review"),
             created_at_utc=str(record.get("created_at_utc") or datetime.now(timezone.utc).isoformat()),
         )
@@ -381,7 +371,6 @@ def _learned_mapping_from_record(record: dict[str, Any]) -> LearnedServiceTextMa
         status="approved",
         source=str(record.get("source") or "manual_review"),
         created_at_utc=_optional_str(record.get("created_at_utc")),
-        rationale=_optional_str(record.get("rationale")),
     )
 
 

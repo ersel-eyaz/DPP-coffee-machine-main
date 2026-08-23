@@ -70,7 +70,7 @@ Rejected feedback must not affect matching or anomaly checks.
 - Original input text must always be preserved.
 - A seeded mapping must remain distinguishable from a learned mapping.
 - Feedback must include provenance: action, status, review source, timestamp,
-  original value, proposed concept, and rationale when available.
+  original value, and proposed concept.
 - The prototype should not claim to verify a reviewer identity or role unless a
   future user/authorization layer is implemented.
 - A single approved feedback record must not silently promote a concept to the
@@ -99,7 +99,6 @@ Recommended fields:
 - `proposed_service_type`
 - `proposed_part_keywords`
 - `reviewer` or `review_source` as a non-verified prototype metadata field
-- `rationale`
 - `source`
 - `created_at_utc`
 

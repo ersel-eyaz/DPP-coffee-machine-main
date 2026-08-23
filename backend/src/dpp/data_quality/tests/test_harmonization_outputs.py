@@ -180,7 +180,6 @@ class FeedbackProposalTests(unittest.TestCase):
         approved = approve_feedback_proposal(
             proposal,
             reviewer="local_user",
-            rationale="Accepted as local evidence only.",
         )
 
         self.assertEqual("proposed", proposal.status)
@@ -202,7 +201,6 @@ class FeedbackProposalTests(unittest.TestCase):
         approved = approve_feedback_proposal(
             proposal,
             reviewer="prototype_review",
-            rationale="Controlled prototype review evidence.",
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
