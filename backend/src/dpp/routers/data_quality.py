@@ -336,6 +336,8 @@ def _detect_scope(document: Dict[str, Any]) -> str:
     except ParseError as exc:
         raise HTTPException(status_code=400, detail=f"Could not parse JSON-LD for scope detection: {exc}") from exc
 
+    encountered_types = sorted({entity.entity_type for entity in parsed.entities})
+    encountered_types_text = ", ".join(repr(entity_type) for entity_type in encountered_types) or "none"
     candidate_scopes = set()
     ignored_overlap_only = False
 
@@ -363,12 +365,20 @@ def _detect_scope(document: Dict[str, Any]) -> str:
     if ignored_overlap_only:
         raise HTTPException(
             status_code=400,
-            detail="Could not auto-detect scope from shared entity types only. Please choose product, emission, or service.",
+            detail=(
+                "Could not auto-detect scope from shared entity types only. "
+                f"Encountered entity types: {encountered_types_text}. "
+                "Please choose product, emission, or service explicitly."
+            ),
         )
 
     raise HTTPException(
         status_code=400,
-        detail="Could not auto-detect scope from entity types. Please choose product, emission, or service.",
+        detail=(
+            "Could not auto-detect scope from entity types. "
+            f"Encountered entity types: {encountered_types_text}. "
+            "Correct unsupported model type names or choose product, emission, or service explicitly."
+        ),
     )
 
 
