@@ -5,13 +5,13 @@ import unittest
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.schemas import AnomalyFinding, AnomalyResult
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
-from dpp.data_quality.harmonization.services import harmonize_document
 from dpp.data_quality.harmonization.schemas import (
     HarmonizationResult,
     HarmonizedEntity,
     HarmonizedField,
     PreservedRelation,
 )
+from dpp.data_quality.harmonization.services import harmonize_document
 
 
 def _field(path: str, value: object) -> HarmonizedField:
@@ -24,6 +24,79 @@ def _field(path: str, value: object) -> HarmonizedField:
 
 
 class AnomalyServiceTests(unittest.TestCase):
+    def test_direct_relation_target_type_mismatch_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "instance-001",
+                    "@type": "dpp:DPPInstance",
+                    "dppStaticLink": {"@id": "part-001"},
+                },
+                {"@id": "part-001", "@type": "dpp:PartInstance"},
+            ],
+        }
+
+        anomaly = analyze_harmonization_result(harmonize_document(document, "product"))
+        finding = next(
+            item for item in anomaly.findings if item.check_id == "relation_target_type_mismatch"
+        )
+
+        self.assertEqual("DPPInstance.dppStaticLink", finding.relation_path)
+        self.assertEqual({"target_entity_type": "DPPStatic"}, finding.expected)
+        self.assertEqual("PartInstance", finding.observed_value["target_entity_type"])
+
+    def test_embedded_relation_target_type_mismatch_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "record-001",
+                    "@type": "dpp:GHGEmissionRecord",
+                    "activity": {"@id": "part-001", "@type": "dpp:PartInstance"},
+                    "emission_factor": {
+                        "@id": "factor-001",
+                        "@type": "dpp:EmissionFactor",
+                        "value": 0.5,
+                        "unit": "kgCO2e/km",
+                    },
+                }
+            ],
+        }
+
+        anomaly = analyze_harmonization_result(harmonize_document(document, "emission"))
+        finding = next(
+            item for item in anomaly.findings if item.check_id == "relation_target_type_mismatch"
+        )
+
+        self.assertEqual("GHGEmissionRecord.activity", finding.relation_path)
+        self.assertEqual({"target_entity_type": "ActivityData"}, finding.expected)
+
+    def test_optional_paired_relation_target_type_mismatch_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "refurbishment-001",
+                    "@type": "dpp:RefurbishmentServiceStep",
+                    "replacedAndNewParts": [
+                        [
+                            "part-old-001",
+                            {"@id": "wrong-new-001", "@type": "dpp:DPPStatic"},
+                        ]
+                    ],
+                }
+            ],
+        }
+
+        anomaly = analyze_harmonization_result(harmonize_document(document, "service"))
+        finding = next(
+            item for item in anomaly.findings if item.check_id == "relation_target_type_mismatch"
+        )
+
+        self.assertEqual("RefurbishmentServiceStep.replacedAndNewParts", finding.relation_path)
+        self.assertEqual("DPPStatic", finding.observed_value["target_entity_type"])
+
     def test_replace_service_step_without_new_part_is_reported(self) -> None:
         document = {
             "@context": {"dpp": "https://example.org/dpp#"},

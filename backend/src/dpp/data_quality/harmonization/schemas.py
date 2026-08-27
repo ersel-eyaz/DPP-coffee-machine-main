@@ -5,16 +5,15 @@ These schemas describe the output of parsing, label mapping, unit normalization,
 and controlled-vocabulary normalization. They are intentionally independent from
 the original Beanie document models.
 
-Entity types and structural relations are assumed to be reliable. The internal
-representation retains embedded children while true references are preserved
-as relations for downstream anomaly detection.
+Entity types are expected to remain recognisable. Registered structural
+relations are preserved for downstream anomaly detection, while unregistered
+relation-shaped inputs are reported without semantic reconstruction.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Literal
-
 
 HarmonizationStatus = Literal[
     "mapped",

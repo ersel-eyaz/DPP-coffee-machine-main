@@ -284,6 +284,11 @@ EXAMPLE_DOCUMENTS: Dict[str, Dict[str, str]] = {
         "scope": "product",
         "path": "harmonization/product_anomaly_input.json",
     },
+    "product_relation_issues": {
+        "label": "Product relation validation",
+        "scope": "product",
+        "path": "harmonization/product_relation_issues_input.json",
+    },
     "emission_anomaly": {
         "label": "Emission anomaly",
         "scope": "emission",

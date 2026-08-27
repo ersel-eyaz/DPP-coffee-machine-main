@@ -32,7 +32,6 @@ from dpp.data_quality.harmonization.normalizers import (
     resolve_enum_value,
     resolve_unit_label,
 )
-from dpp.data_quality.harmonization.unit_registry import explicit_unit_values_for_field
 from dpp.data_quality.harmonization.parser import ParsedEntity, ParsedRelation, parse_jsonld_document
 from dpp.data_quality.harmonization.schemas import (
     HarmonizationIssue,
@@ -43,6 +42,7 @@ from dpp.data_quality.harmonization.schemas import (
     RawField,
 )
 from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID
+from dpp.data_quality.harmonization.unit_registry import explicit_unit_values_for_field
 from dpp.data_quality.scopes import SUPPORTED_SCOPES
 from dpp.data_quality.scopes.schemas import CanonicalField, ScopeDefinition
 
@@ -102,6 +102,69 @@ def _relation_definition(scope: ScopeDefinition, entity_type: str, relation_name
         if relation.source_entity_type == entity_type and relation.relation_name == relation_name:
             return relation
     return None
+
+
+def _relation_input_issues(
+    parsed_entity: ParsedEntity,
+    scope: ScopeDefinition,
+) -> list[HarmonizationIssue]:
+    """Report relation-shaped inputs that cannot be preserved for the selected scope."""
+    issues: list[HarmonizationIssue] = []
+    reported: set[tuple[str, str]] = set()
+
+    def report(label: str, input_representation: str, expected_representation: str | None = None) -> None:
+        key = (label, input_representation)
+        if key in reported:
+            return
+        reported.add(key)
+
+        if expected_representation is None:
+            message = (
+                f"Relation label {label!r} is not registered for entity type "
+                f"{parsed_entity.entity_type!r} in scope {scope.name!r}; the relation was not preserved."
+            )
+        else:
+            message = (
+                f"Relation {label!r} on entity type {parsed_entity.entity_type!r} was provided as "
+                f"{input_representation!r}, but scope {scope.name!r} expects "
+                f"{expected_representation!r}; the relation was not preserved."
+            )
+
+        issues.append(
+            HarmonizationIssue(
+                severity="warning",
+                message=message,
+                entity_id=parsed_entity.entity_id,
+                entity_type=parsed_entity.entity_type,
+                field_label=label,
+            )
+        )
+
+    for relation in parsed_entity.relations:
+        relation_name = _canonical_relation_name(parsed_entity.entity_type, relation.label)
+        definition = _relation_definition(scope, parsed_entity.entity_type, relation_name)
+        if definition is None:
+            report(relation.label, "link")
+        elif definition.representation != "link":
+            report(relation.label, "link", definition.representation)
+
+    for embedded in parsed_entity.embedded_entities:
+        relation_name = _canonical_relation_name(parsed_entity.entity_type, embedded.label)
+        definition = _relation_definition(scope, parsed_entity.entity_type, relation_name)
+        if definition is None:
+            report(embedded.label, "embedded")
+        elif definition.representation not in {"embedded", "link"}:
+            report(embedded.label, "embedded", definition.representation)
+
+    for paired in parsed_entity.paired_embedded_entities:
+        relation_name = _canonical_relation_name(parsed_entity.entity_type, paired.label)
+        definition = _relation_definition(scope, parsed_entity.entity_type, relation_name)
+        if definition is None:
+            report(paired.label, "paired_embedded")
+        elif definition.representation != "paired_embedded":
+            report(paired.label, "paired_embedded", definition.representation)
+
+    return issues
 
 
 def _build_preserved_relations(
@@ -684,10 +747,11 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
     """
     Harmonize a JSON-LD-like input document for a selected scope.
 
-    Entity types and structural relations are assumed to be reliable. Field label
-    mapping is accepted only when the mapped canonical entity type matches the
-    actual parsed entity type. Otherwise, the field is treated as unmapped and a
-    warning is recorded.
+    Entity types are expected to remain recognisable. Registered structural
+    relations and known JSON-LD aliases are preserved; unregistered relation-shaped
+    inputs are reported without being guessed or renamed. Field label mapping is
+    accepted only when the mapped canonical entity type matches the actual parsed
+    entity type. Otherwise, the field is treated as unmapped and a warning is recorded.
     """
 
     scope = SUPPORTED_SCOPES.get(scope_name)
@@ -748,6 +812,7 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
         unmapped_fields: list[RawField] = []
         text_harmonization: dict[str, Any] = {}
         issues: list[HarmonizationIssue] = []
+        issues.extend(_relation_input_issues(parsed_entity, scope))
         preserved_relations = _build_preserved_relations(
             parsed_entity,
             scope,

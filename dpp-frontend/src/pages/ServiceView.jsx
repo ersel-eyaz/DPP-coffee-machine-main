@@ -1413,8 +1413,8 @@ export default function ServiceView() {
                       {qualityTextEntries.length > 0 && (
                         <div>
                           <div className="small fw-semibold mb-1">Text harmonization</div>
-                          <ListGroup variant="flush">
-                            {qualityTextEntries.slice(0, 4).map((entry, index) => (
+                          <ListGroup variant="flush" className="quality-result-scroll">
+                            {qualityTextEntries.map((entry, index) => (
                               <ListGroup.Item key={`${entry.field_name}-${index}`} className="px-0 py-1">
                                 <div className="d-flex flex-wrap align-items-center gap-2">
                                   <Badge bg={entry.status === "normalized" ? "success" : "warning"}>
@@ -1453,8 +1453,8 @@ export default function ServiceView() {
                       {qualityPlausibilityFindings.length > 0 && (
                         <div>
                           <div className="small fw-semibold mb-1">Plausibility notes</div>
-                          <ListGroup variant="flush">
-                            {qualityPlausibilityFindings.slice(0, 4).map((finding, index) => (
+                          <ListGroup variant="flush" className="quality-result-scroll">
+                            {qualityPlausibilityFindings.map((finding, index) => (
                               <ListGroup.Item key={`${finding.check_id}-${index}`} className="px-0 py-1">
                                 <Badge bg={severityVariant(finding.severity)} className="me-2">
                                   {finding.severity}
@@ -1493,8 +1493,8 @@ export default function ServiceView() {
                       {qualityLlmFindings.length > 0 && (
                         <div className="quality-llm-review">
                           <div className="small fw-semibold mb-1">LLM service review</div>
-                          <ListGroup variant="flush">
-                            {qualityLlmFindings.slice(0, 2).map((finding, index) => (
+                          <ListGroup variant="flush" className="quality-result-scroll">
+                            {qualityLlmFindings.map((finding, index) => (
                               <ListGroup.Item
                                 key={`${finding.check_id}-${index}`}
                                 className="px-0 py-1 border-0 bg-transparent"

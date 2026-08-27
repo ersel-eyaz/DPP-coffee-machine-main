@@ -34,7 +34,6 @@ from dpp.data_quality.harmonization.outputs import (
 )
 from dpp.data_quality.harmonization.services import harmonize_document
 
-
 EXAMPLES = {
     "product": ("product", "harmonization/product_dirty.json"),
     "emission": ("emission", "harmonization/emission_dirty.json"),
@@ -44,6 +43,7 @@ EXAMPLES = {
     "label_fuzzy_candidate": ("product", "harmonization/label_fuzzy_candidate_input.json"),
     "label_ambiguous": ("product", "harmonization/label_ambiguous_input.json"),
     "product_anomaly": ("product", "harmonization/product_anomaly_input.json"),
+    "product_relation_issues": ("product", "harmonization/product_relation_issues_input.json"),
     "product_profile": ("product", "harmonization/product_profile_input.json"),
     "unit_exact_alias": ("product", "harmonization/unit_exact_alias_input.json"),
     "unit_fuzzy_candidate": ("product", "harmonization/unit_fuzzy_candidate_input.json"),

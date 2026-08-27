@@ -1,0 +1,35 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#",
+    "schema": "https://schema.org/"
+  },
+  "@graph": [
+    {
+      "@id": "dpp-static-relation-demo-001",
+      "@type": "dpp:DPPStatic",
+      "dpp:name": "Relation validation demo",
+      "dpp:productClass": "Automatic coffee machine"
+    },
+    {
+      "@id": "part-static-relation-demo-001",
+      "@type": "dpp:PartStatic"
+    },
+    {
+      "@id": "part-instance-relation-demo-001",
+      "@type": "dpp:PartInstance",
+      "schema:isVariantOf": {
+        "@id": "part-static-relation-demo-001"
+      }
+    },
+    {
+      "@id": "dpp-instance-relation-demo-001",
+      "@type": "dpp:DPPInstance",
+      "schema:isVariantOf": {
+        "@id": "part-instance-relation-demo-001"
+      },
+      "dpp:partInstnceLink": {
+        "@id": "part-instance-relation-demo-001"
+      }
+    }
+  ]
+}

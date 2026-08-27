@@ -94,6 +94,10 @@ product_anomaly_input.json
   Product-scope example designed to trigger relationship, numeric range,
   product profile, graph/material-weight, and cross-field consistency findings.
 
+product_relation_issues_input.json
+  Product-scope example with one unregistered optional relation label and one
+  registered relation that targets an entity of the wrong model type.
+
 product_profile_input.json
   Product-scope example for the synthetic BaristaCore 2500 profile check.
 

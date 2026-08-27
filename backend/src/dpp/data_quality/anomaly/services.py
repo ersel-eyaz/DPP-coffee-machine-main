@@ -155,7 +155,8 @@ def _apply_required_relation_checks(result: HarmonizationResult) -> list[Anomaly
         configured_relations = relations_by_source.get(entity.entity_type, [])
 
         for relation in entity.relations:
-            if result.find_entity(relation.target_entity_id) is None:
+            target = result.find_entity(relation.target_entity_id)
+            if target is None:
                 findings.append(
                     AnomalyFinding(
                         check_id="dangling_relation_target",
@@ -173,17 +174,70 @@ def _apply_required_relation_checks(result: HarmonizationResult) -> list[Anomaly
                         review_action="verify_reference_target",
                     )
                 )
-
-        for relation in configured_relations:
-            if not relation.required:
                 continue
 
+            if relation.target_entity_type is not None and target.entity_type != relation.target_entity_type:
+                findings.append(
+                    AnomalyFinding(
+                        check_id="relation_target_type_mismatch",
+                        category="relationship",
+                        severity="warning",
+                        message=(
+                            f"{entity.entity_type}.{relation.relation_name} targets entity "
+                            f"{target.entity_id!r} of type {target.entity_type!r}; expected "
+                            f"{relation.target_entity_type!r}."
+                        ),
+                        entity_id=entity.entity_id,
+                        entity_type=entity.entity_type,
+                        relation_path=f"{entity.entity_type}.{relation.relation_name}",
+                        observed_value={
+                            "target_entity_id": target.entity_id,
+                            "target_entity_type": target.entity_type,
+                        },
+                        expected={"target_entity_type": relation.target_entity_type},
+                        review_action="verify_relation_target_type",
+                    )
+                )
+
+        for relation in configured_relations:
+            children: list[HarmonizedEntity] = []
             if relation.representation == "embedded":
-                present = bool(_embedded_children(entity, relation.relation_name))
+                children = _embedded_children(entity, relation.relation_name)
+                present = bool(children)
             elif relation.representation == "paired_embedded":
-                present = bool(entity.paired_embedded_entities.get(relation.relation_name, []))
+                pairs = entity.paired_embedded_entities.get(relation.relation_name, [])
+                children = [child for _, child in pairs]
+                present = bool(pairs)
             else:
                 present = bool(_relation_targets(entity, relation.relation_name))
+
+            if relation.representation in {"embedded", "paired_embedded"}:
+                for child in children:
+                    if child.entity_type == relation.target_entity_type:
+                        continue
+                    findings.append(
+                        AnomalyFinding(
+                            check_id="relation_target_type_mismatch",
+                            category="relationship",
+                            severity="warning",
+                            message=(
+                                f"{relation.path} contains entity {child.entity_id!r} of type "
+                                f"{child.entity_type!r}; expected {relation.target_entity_type!r}."
+                            ),
+                            entity_id=entity.entity_id,
+                            entity_type=entity.entity_type,
+                            relation_path=relation.path,
+                            observed_value={
+                                "target_entity_id": child.entity_id,
+                                "target_entity_type": child.entity_type,
+                            },
+                            expected={"target_entity_type": relation.target_entity_type},
+                            review_action="verify_relation_target_type",
+                        )
+                    )
+
+            if not relation.required:
+                continue
             if present:
                 continue
 

@@ -1,7 +1,7 @@
 """
 Minimal JSON-LD-like parser for the harmonization layer.
 
-The parser extracts entities, scalar fields, trusted references, and embedded
+The parser extracts entities, scalar fields, relation-shaped references, and embedded
 typed child objects from a dictionary input. It does not perform label
 harmonization, unit normalization, relation harmonization, or anomaly detection.
 """
@@ -33,7 +33,7 @@ class ParsedField:
 @dataclass(frozen=True)
 class ParsedRelation:
     """
-    A trusted structural relation extracted from an input entity.
+    A relation-shaped reference extracted from an input entity.
 
     Attributes:
         label: Original input relation label without namespace prefix.
@@ -217,8 +217,8 @@ def _extract_paired_embedded_entities(
     *,
     entity_id: str,
 ) -> list[ParsedPairedEmbeddedEntity]:
-    """Parse legacy replacement pairs shaped as ``[old_part_id, new_part_object]``."""
-    if label != "replacedAndNewParts" or not isinstance(value, list):
+    """Parse relation-shaped pairs formatted as ``[existing_id, embedded_object]``."""
+    if not isinstance(value, list):
         return []
 
     pairs: list[ParsedPairedEmbeddedEntity] = []

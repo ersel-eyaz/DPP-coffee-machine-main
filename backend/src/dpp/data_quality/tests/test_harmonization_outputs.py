@@ -10,6 +10,14 @@ from pathlib import Path
 
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
+from dpp.data_quality.harmonization import free_text as free_text_module
+from dpp.data_quality.harmonization.feedback import (
+    append_feedback_record,
+    approve_feedback_proposal,
+    create_feedback_proposal,
+    load_learned_service_text_mappings,
+)
+from dpp.data_quality.harmonization.free_text import normalize_text_value
 from dpp.data_quality.harmonization.mapper import map_field_label
 from dpp.data_quality.harmonization.normalizers import (
     normalize_enum_value,
@@ -19,15 +27,6 @@ from dpp.data_quality.harmonization.normalizers import (
 )
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.services import harmonize_document
-from dpp.data_quality.harmonization import free_text as free_text_module
-from dpp.data_quality.harmonization.free_text import normalize_text_value
-from dpp.data_quality.harmonization.feedback import (
-    append_feedback_record,
-    approve_feedback_proposal,
-    create_feedback_proposal,
-    load_learned_service_text_mappings,
-)
-
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples" / "harmonization"
 
@@ -843,6 +842,122 @@ class CleanJsonLdOutputTests(unittest.TestCase):
 
         self.assertEqual("https://schema.org/", output["@context"]["schema"])
         self.assertEqual("https://example.org/dpp#", output["@context"]["dpp"])
+
+    def test_unregistered_direct_relation_is_reported_and_not_preserved(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "instance-001",
+                    "@type": "dpp:DPPInstance",
+                    "dppStatikLink": {"@id": "static-001"},
+                },
+                {"@id": "static-001", "@type": "dpp:DPPStatic"},
+            ],
+        }
+
+        result = harmonize_document(document, "product")
+        entity = result.entities["instance-001"]
+
+        self.assertEqual([], entity.relations)
+        self.assertTrue(
+            any(
+                issue.field_label == "dppStatikLink" and "not registered" in issue.message
+                for issue in entity.issues
+            )
+        )
+
+    def test_unregistered_embedded_relation_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "record-001",
+                    "@type": "dpp:GHGEmissionRecord",
+                    "activty": {
+                        "@id": "activity-001",
+                        "@type": "dpp:ActivityData",
+                        "quantity": 10,
+                    },
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "emission")
+        entity = result.entities["record-001"]
+
+        self.assertTrue(
+            any(
+                issue.field_label == "activty" and "not registered" in issue.message
+                for issue in entity.issues
+            )
+        )
+        self.assertNotIn("activity", entity.embedded_entities)
+
+    def test_unregistered_paired_relation_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "refurbishment-001",
+                    "@type": "dpp:RefurbishmentServiceStep",
+                    "replacedAndNewPartz": [
+                        [
+                            "part-old-001",
+                            {"@id": "part-new-001", "@type": "dpp:PartInstance"},
+                        ]
+                    ],
+                }
+            ],
+        }
+
+        result = harmonize_document(document, "service")
+        entity = result.entities["refurbishment-001"]
+
+        self.assertTrue(
+            any(
+                issue.field_label == "replacedAndNewPartz" and "not registered" in issue.message
+                for issue in entity.issues
+            )
+        )
+        self.assertNotIn("replacedAndNewParts", entity.paired_embedded_entities)
+
+    def test_known_relation_alias_is_preserved_without_relation_warning(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "instance-001",
+                    "@type": "dpp:DPPInstance",
+                    "isVariantOf": {"@id": "static-001"},
+                },
+                {"@id": "static-001", "@type": "dpp:DPPStatic"},
+            ],
+        }
+
+        result = harmonize_document(document, "product")
+        entity = result.entities["instance-001"]
+
+        self.assertEqual("dppStaticLink", entity.relations[0].relation_name)
+        self.assertFalse(any("Relation" in issue.message for issue in entity.issues))
+
+    def test_product_relation_issue_example_exposes_both_report_layers(self) -> None:
+        document = _load_example("product_relation_issues_input.json")
+        result = harmonize_document(document, "product")
+        instance = result.entities["dpp-instance-relation-demo-001"]
+
+        self.assertTrue(
+            any(issue.field_label == "partInstnceLink" for issue in instance.issues)
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        mismatch = next(
+            finding
+            for finding in anomaly.findings
+            if finding.check_id == "relation_target_type_mismatch"
+        )
+        self.assertEqual("DPPInstance.dppStaticLink", mismatch.relation_path)
+        self.assertEqual("PartInstance", mismatch.observed_value["target_entity_type"])
 
 
 if __name__ == "__main__":
