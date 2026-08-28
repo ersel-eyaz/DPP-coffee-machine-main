@@ -699,17 +699,12 @@ def _text_similarity(left: str, right: str) -> float:
     sequence_score = SequenceMatcher(None, normalized_left, normalized_right).ratio()
     left_tokens = set(normalized_left.split())
     right_tokens = set(normalized_right.split())
-    token_score = (
-        len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
-        if left_tokens and right_tokens
-        else 0.0
-    )
     containment_score = (
         len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens))
         if left_tokens and right_tokens
         else 0.0
     )
-    return max(sequence_score, token_score, containment_score)
+    return max(sequence_score, containment_score)
 
 
 def _mean_or_none(values: list[float]) -> float | None:
