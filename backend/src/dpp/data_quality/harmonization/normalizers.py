@@ -9,10 +9,11 @@ legacy-aligned target codes such as GRM, CM, and HRS; source-only units such as
 mg, mm, m, and min are accepted only when a mapped field allows conversion.
 
 Controlled-vocabulary definitions live in scopes.controlled_vocabularies:
-canonical serialized values, Python enum member aliases, and semantic profile
-texts are scope metadata rather than normalization logic. Human-readable dirty
-input aliases live in harmonization.enum_value_aliases and are generated from
-the documented LLM notebook workflow.
+canonical serialized values, mappings from Python enum member names to those
+canonical values, and semantic profile texts are scope metadata rather than
+normalization logic. Human-readable dirty-input aliases live in
+harmonization.enum_value_aliases and are generated from the documented LLM
+notebook workflow.
 
 This module combines those sources at runtime. It accepts canonical values
 directly, applies generated and model-code aliases, then uses a conservative
@@ -32,7 +33,7 @@ from typing import Any
 
 from dpp.data_quality.harmonization.enum_value_aliases import GENERATED_ENUM_VALUE_ALIASES
 from dpp.data_quality.scopes.controlled_vocabularies import (
-    CONTROLLED_VOCABULARY_PYTHON_MEMBER_ALIASES,
+    CONTROLLED_VOCABULARY_PYTHON_MEMBER_TO_CANONICAL_VALUE,
     CONTROLLED_VOCABULARY_SEMANTIC_PROFILES,
     CONTROLLED_VOCABULARY_VALUES,
 )
@@ -141,15 +142,19 @@ def _controlled_vocabulary_lookup_entries(canonical_path: str) -> dict[str, tupl
     """Return raw lookup entries for one controlled-vocabulary field.
 
     Canonical serialized values are accepted as canonical input. Python enum
-    member names and generated dirty-input variants are accepted as aliases.
+    member names are accepted as model-code representations; generated
+    dirty-input variants are accepted as aliases.
     """
     entries: dict[str, tuple[str, str]] = {}
 
     for canonical_value in CONTROLLED_VOCABULARY_VALUES.get(canonical_path, ()):
         entries[canonical_value] = (canonical_value, "canonical")
 
-    for alias, canonical_value in CONTROLLED_VOCABULARY_PYTHON_MEMBER_ALIASES.get(canonical_path, {}).items():
-        entries[alias] = (canonical_value, "alias")
+    python_member_mapping = CONTROLLED_VOCABULARY_PYTHON_MEMBER_TO_CANONICAL_VALUE.get(
+        canonical_path, {}
+    )
+    for python_member_name, canonical_value in python_member_mapping.items():
+        entries[python_member_name] = (canonical_value, "alias")
 
     for alias, canonical_value in GENERATED_ENUM_VALUE_ALIASES.get(canonical_path, {}).items():
         entries[alias] = (canonical_value, "alias")

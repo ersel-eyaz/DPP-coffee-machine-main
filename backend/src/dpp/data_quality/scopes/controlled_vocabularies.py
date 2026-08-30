@@ -55,7 +55,7 @@ CONTROLLED_VOCABULARY_VALUES: dict[str, tuple[str, ...]] = {
 }
 
 
-CONTROLLED_VOCABULARY_PYTHON_MEMBER_ALIASES: dict[str, dict[str, str]] = {
+CONTROLLED_VOCABULARY_PYTHON_MEMBER_TO_CANONICAL_VALUE: dict[str, dict[str, str]] = {
     "ActivityData.activity_type": {
         "ELECTRICITY_CONSUMPTION": "electricity_consumption",
         "DISTANCE_TRAVELED": "distance_traveled",
