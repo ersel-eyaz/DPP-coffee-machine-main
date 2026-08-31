@@ -91,6 +91,36 @@ def _extract_id_from_link(link_or_object: Any) -> Optional[str]:
     return str(getattr(link_or_object, "id", None) or "") or None
 
 
+def _validate_replacement_part_compatibility(
+    old_part: PartInstance,
+    new_part: PartInstance,
+) -> None:
+    """Reject replacement instances that violate identity or static-part consistency."""
+    old_part_id = str(old_part.id)
+    new_part_id = str(new_part.id)
+    if old_part_id == new_part_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Replacement part must use a new PartInstance id.",
+        )
+
+    old_static_id = _extract_id_from_link(old_part.partStaticLink)
+    new_static_id = _extract_id_from_link(new_part.partStaticLink)
+    if old_static_id is None or new_static_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both replaced and replacement parts must reference a PartStatic definition.",
+        )
+    if old_static_id != new_static_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Replacement part must reference the same PartStatic definition "
+                "as the replaced part."
+            ),
+        )
+
+
 async def _resolve_org(link_or_object: Any) -> Optional[dict]:
     """Resolve an organisation to a minimal dict used consistently in responses."""
     if not link_or_object:
@@ -2156,6 +2186,7 @@ async def add_replace_step_to_instance(instance_id: str, step: ReplaceServiceSte
     if parent is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Replacing the root part is not supported.")
 
+    _validate_replacement_part_compatibility(target, step.newPart)
     root.historyOfDetachedParts.append(_snapshot_part_instance(target))
     replaced_successfully = False
     for child_index, child in enumerate(parent.compositeParts):
@@ -2249,6 +2280,7 @@ async def add_remanufacturing_step_to_instance(instance_id: str, step: Remanufac
         else:
             raise HTTPException(status_code=400, detail="Unsupported type for new part in replacedAndNewParts.")
 
+        _validate_replacement_part_compatibility(target, new_part_obj)
         root.historyOfDetachedParts.append(_snapshot_part_instance(target))
 
         replaced_flag = False
@@ -2329,6 +2361,7 @@ async def add_refurbishment_step_to_instance(instance_id: str, step: Refurbishme
         else:
             raise HTTPException(status_code=400, detail="Unsupported type for new part in replacedAndNewParts.")
 
+        _validate_replacement_part_compatibility(target, new_part_obj)
         root.historyOfDetachedParts.append(_snapshot_part_instance(target))
 
         replaced_flag = False

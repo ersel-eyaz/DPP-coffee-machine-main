@@ -279,9 +279,9 @@ export default function ServiceView() {
       pis.forEach((pi, i) => {
         const id = batch[i];
         const nm = pi?.partStaticLink?.name || pi?.partStaticLink?.document?.name || pi?.name || id;
-        items.push({ id, label: nm });
-        const ps = pi?.partStaticLink || pi?.partStaticLink?.document;
+        const ps = pi?.partStaticLink?.document || pi?.partStaticLink;
         const staticId = ps?.id || ps?._id || (typeof ps === "string" ? ps : null);
+        items.push({ id, label: nm, partStaticId: staticId });
         if (staticId && !staticIdx.has(staticId)) {
           staticIdx.set(staticId, { id: staticId, label: ps?.name || nm || staticId });
         }
@@ -318,6 +318,13 @@ export default function ServiceView() {
   };
 
   const buildPendingServiceQualityDocument = () => {
+    const selectedPart = partOptions.find((part) => part.id === selPartId);
+    const oldStaticId = selectedPart?.partStaticId;
+    const pendingNewPart = {
+      "@id": "pending-new-part-instance",
+      "@type": "dpp:PartInstance",
+      ...(newStaticId ? { partStaticLink: { "@id": newStaticId } } : {}),
+    };
     const node = {
       "@id": "pending-service-step",
       "@type": `dpp:${stepType}`,
@@ -335,13 +342,27 @@ export default function ServiceView() {
       node.cleanedPartId = selPartId;
     } else if (stepType === "ReplaceServiceStep") {
       node.replacedPartId = selPartId;
-      node.newPart = { "@id": newStaticId || "pending-new-part", "@type": "dpp:PartInstance" };
+      node.newPart = pendingNewPart;
     } else if (stepType === "RemanufacturingServiceStep" || stepType === "RefurbishmentServiceStep") {
       node.repairedPartIds = [];
       node.cleanedPartIds = [];
-      node.replacedAndNewParts = [
-        [selPartId, { "@id": newStaticId || "pending-new-part", "@type": "dpp:PartInstance" }],
-      ];
+      node.replacedAndNewParts = [[selPartId, pendingNewPart]];
+    }
+
+    const graph = [node];
+    const hasReplacementContext =
+      stepType === "ReplaceServiceStep" ||
+      stepType === "RemanufacturingServiceStep" ||
+      stepType === "RefurbishmentServiceStep";
+    if (hasReplacementContext && selPartId && oldStaticId) {
+      graph.push({
+        "@id": selPartId,
+        "@type": "dpp:PartInstance",
+        partStaticLink: { "@id": oldStaticId },
+      });
+      [...new Set([oldStaticId, newStaticId].filter(Boolean))].forEach((staticId) => {
+        graph.push({ "@id": staticId, "@type": "dpp:PartStatic" });
+      });
     }
 
     return {
@@ -349,7 +370,7 @@ export default function ServiceView() {
         dpp: "https://example.com/dpp#",
         schema: "https://schema.org/",
       },
-      "@graph": [node],
+      "@graph": graph,
     };
   };
 
