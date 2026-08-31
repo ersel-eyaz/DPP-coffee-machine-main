@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from dpp.data_quality.anomaly.llm_review import (
     _build_review_context,
+    _concept_context,
     _findings_from_reviews,
     build_service_llm_review_findings,
 )
@@ -14,6 +15,15 @@ from dpp.data_quality.harmonization.schemas import HarmonizationResult, Harmoniz
 
 
 class ServiceLlmReviewTests(unittest.TestCase):
+    def test_concept_context_uses_weak_terms_without_generated_service_types(self) -> None:
+        context = _concept_context("does_not_turn_on")
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertIn("related_context_terms", context)
+        self.assertNotIn("related_part_keywords", context)
+        self.assertNotIn("applicable_service_types", context)
+
     def test_missing_api_key_returns_info_finding(self) -> None:
         result = HarmonizationResult(
             scope_name="service",

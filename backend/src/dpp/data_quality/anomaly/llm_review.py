@@ -24,7 +24,6 @@ from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
 from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID
 
-
 DEFAULT_LLM_REVIEW_MODEL = "gpt-5.4-mini"
 LLM_REVIEW_PROMPT_VERSION = "service_llm_review_v1"
 LLM_REVIEW_TIMEOUT_SECONDS = 30.0
@@ -136,8 +135,7 @@ def _concept_context(concept_id: str) -> dict[str, Any] | None:
         "evidence_source": "core_registry",
         "inventory_status": concept.inventory_status,
         "examples": list(concept.examples[:5]),
-        "applicable_service_types": list(concept.applicable_service_types),
-        "related_part_keywords": list(concept.related_part_keywords),
+        "related_context_terms": list(concept.related_context_terms),
     }
 
 

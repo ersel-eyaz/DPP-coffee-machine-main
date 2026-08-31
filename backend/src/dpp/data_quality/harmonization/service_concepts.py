@@ -18,7 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-
 TextConceptKind = Literal["symptom", "diagnosis"]
 TextConceptInventoryStatus = Literal["core", "review_candidate"]
 
@@ -34,8 +33,7 @@ class TextConcept:
         kind: Concept registry kind, e.g. symptom or diagnosis.
         description: Short semantic description used for embedding matching.
         examples: Validated registry surface forms used by exact, fuzzy, and embedding matching.
-        applicable_service_types: Optional service-step types where the concept is especially plausible.
-        related_part_keywords: Optional part-name keywords kept as soft context metadata.
+        related_context_terms: Optional weak context terms retained for review support.
         inventory_status: Whether the concept is part of the OpenRepairData-derived core vocabulary or a review candidate.
     """
 
@@ -44,8 +42,7 @@ class TextConcept:
     kind: TextConceptKind
     description: str
     examples: tuple[str, ...] = ()
-    applicable_service_types: tuple[str, ...] = ()
-    related_part_keywords: tuple[str, ...] = ()
+    related_context_terms: tuple[str, ...] = ()
     inventory_status: TextConceptInventoryStatus = "core"
 
 
@@ -63,14 +60,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             "didn't turn on",
             'Shorts out the power',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'power switch',
             'power button',
             'plug',
@@ -92,14 +82,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'nothing happens',
             'nothing happens when its turned on',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'coffee machine',
             'coffee maker',
             'machine',
@@ -120,14 +103,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             "won't grind",
             'coffee grinder not working',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'grinder',
             'coffee grinder',
             'grinding motor',
@@ -150,14 +126,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'not brewing coffee',
             'Not frothing milk but makes coffee okay',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'brew outlet',
             'coffee outlet',
             'brew unit',
@@ -181,14 +150,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'No lights on operation panel',
             'no power getting through to the mechanism',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'power supply',
             'plug',
             'fuse',
@@ -213,14 +175,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'Will not pour coffee',
             'water not coming through',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'water path',
             'brew unit',
             'pump',
@@ -244,14 +199,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             "Water's not moving",
             'Water will not go through',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'pump',
             'water pump',
             'water line',
@@ -274,14 +222,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'Two jammed pods inside',
             'Not closing pod cavity',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'pod',
             'capsule',
             'pod cavity',
@@ -307,14 +248,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'coffee pods not being pierced',
             'Not piercing pods',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'pod',
             'capsule',
             'piercer',
@@ -338,14 +272,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'Power is on - but nothing happening',
             'Powers up but something wrong',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'power light',
             'control panel',
             'main board',
@@ -367,14 +294,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'reduced water flow',
             'blockage',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'pump',
             'water path',
             'tubing',
@@ -398,14 +318,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'steam leak from wand',
             'some water and steam out but nothing more',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'steam wand',
             'steam control',
             'steam valve',
@@ -429,14 +342,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'Not steam properly',
             'further repair required to address steamer',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'steam wand',
             'steamer',
             'steam nozzle',
@@ -461,14 +367,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'Water leaking from the machine',
             'leaking from the base',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'seal',
             'gasket',
             'base',
@@ -493,14 +392,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             "water don't heat",
             "boiler doesn't heat the water",
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'heating element',
             'boiler',
             'heater',
@@ -521,14 +413,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'grinder will not start',
             'not switching on',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'grinder',
             'coffee grinder',
             'grinder motor',
@@ -553,14 +438,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'flashing light. red light flashing',
             'red light comes on rather than the green one',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'indicator light',
             'red light',
             'green light',
@@ -585,14 +463,7 @@ SYMPTOM_CONCEPTS: tuple[TextConcept, ...] = (
             'Leaks water from pod',
             'leak is coming from the area where the pods are inserted',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'pod',
             'capsule',
             'pod cavity',
@@ -619,14 +490,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'airlock in pump or pipe',
             'Pump had air in the pipe',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'pump',
             'water pump',
             'pipe',
@@ -650,14 +514,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'or is blocked',
             'Connection to water pump had come off',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'tubing',
             'hose',
             'pipe',
@@ -682,14 +539,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'cleaned steamer nozzle',
             'Cleaned and unblocked the nozzle',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'steam nozzle',
             'steamer nozzle',
             'nozzle',
@@ -715,14 +565,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'dirty on/off button',
             'carbon or steam',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'switch',
             'button',
             'contacts',
@@ -747,14 +590,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'Fault identified as likely to be the fuse',
             'Need thermal fuse',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'fuse',
             'plug fuse',
             'thermal fuse',
@@ -775,14 +611,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'no power to heating element',
             'heater element fault',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'heating element',
             'heater',
             'boiler',
@@ -806,14 +635,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'scale light on',
             'small parts of limestone (kalk)',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'limescale',
             'scale',
             'limestone',
@@ -839,14 +661,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'Plunger not able to pierce capsuls',
             'replaced pod mechanism',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'pod mechanism',
             'capsule mechanism',
             'lid',
@@ -871,14 +686,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             "Pump doesn't work",
             'small motor not operating',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'pump',
             'water pump',
             'pump motor',
@@ -901,14 +709,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'seal needs cleaning /replaced',
             'Seal not fitting right',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'seal',
             'gasket',
             'o-ring',
@@ -933,14 +734,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'Switch broken',
             'Switch is defective',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'switch',
             'button',
             'on switch',
@@ -964,14 +758,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'Probably one of the solenoids is faulty',
             'Steam valve stripped - turns but no effect',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'valve',
             'steam valve',
             'solenoid',
@@ -994,14 +781,7 @@ DIAGNOSIS_CONCEPTS: tuple[TextConcept, ...] = (
             'Changer le thermostat',
             'needs a new rheostat',
         ),
-        applicable_service_types=(
-            'RepairServiceStep',
-            'ReplaceServiceStep',
-            'CleaningServiceStep',
-            'RefurbishmentServiceStep',
-            'RemanufacturingServiceStep',
-        ),
-        related_part_keywords=(
+        related_context_terms=(
             'thermostat',
             'rheostat',
             'temperature control',

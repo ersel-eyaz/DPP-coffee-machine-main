@@ -575,6 +575,32 @@ class AnomalyServiceTests(unittest.TestCase):
 
         self.assertEqual(["service_text_requires_review"], [finding.check_id for finding in anomaly.findings])
 
+    def test_normalized_service_concept_is_not_compared_with_generated_service_types(self) -> None:
+        result = HarmonizationResult(
+            scope_name="service",
+            entities={
+                "service-001": HarmonizedEntity(
+                    entity_id="service-001",
+                    entity_type="SecondaryValueStep",
+                    text_harmonization={
+                        "observedSymptoms": {
+                            "status": "normalized",
+                            "original_value": "does not switch on",
+                            "normalized_value": "does_not_turn_on",
+                            "inventory_status": "core",
+                        }
+                    },
+                )
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+
+        self.assertNotIn(
+            "service_concept_type_mismatch",
+            [finding.check_id for finding in anomaly.findings],
+        )
+
     def test_service_action_context_is_preserved(self) -> None:
         document = {
             "@context": {"dpp": "https://example.org/dpp#"},

@@ -23,7 +23,6 @@ from dpp.data_quality.anomaly.rules import (
 from dpp.data_quality.anomaly.schemas import AnomalyFinding, AnomalyResult
 from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
-from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_KIND
 from dpp.data_quality.scopes import SUPPORTED_SCOPES
 from dpp.data_quality.scopes.schemas import CanonicalRelation
 
@@ -937,16 +936,6 @@ def _apply_emission_scope_category_checks(result: HarmonizationResult) -> list[A
     return findings
 
 
-def _concept_applicability_lookup() -> dict[str, tuple[str, ...]]:
-    """Return applicable service types keyed by service concept id."""
-    lookup: dict[str, set[str]] = {}
-    for concepts in TEXT_CONCEPTS_BY_KIND.values():
-        for concept in concepts:
-            lookup[concept.concept_id] = set(concept.applicable_service_types)
-
-    return {concept_id: tuple(sorted(service_types)) for concept_id, service_types in lookup.items()}
-
-
 def _iter_text_report_entries(value: Any) -> list[dict[str, Any]]:
     """Flatten text_harmonization report entries from one field."""
     if isinstance(value, dict):
@@ -967,9 +956,8 @@ def _iter_text_report_entries(value: Any) -> list[dict[str, Any]]:
 
 
 def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
-    """Check unresolved service text and concept/service-type plausibility."""
+    """Check unresolved service text and concepts requiring confirmation."""
     findings: list[AnomalyFinding] = []
-    applicable_by_concept = _concept_applicability_lookup()
 
     for entity in result.iter_entities():
         if not entity.text_harmonization:
@@ -1024,25 +1012,6 @@ def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyF
                                 "inventory_status": "review_candidate",
                             },
                             review_action="confirm_or_reject_review_candidate_concept",
-                        )
-                    )
-
-                applicable_types = applicable_by_concept.get(concept_id, ())
-                if applicable_types and entity.entity_type not in applicable_types:
-                    findings.append(
-                        AnomalyFinding(
-                            check_id="service_concept_type_mismatch",
-                            category="semantic",
-                            severity="info",
-                            message=f"Service concept {concept_id!r} is unusual for {entity.entity_type}.",
-                            entity_id=entity.entity_id,
-                            entity_type=entity.entity_type,
-                            field_path=f"{entity.entity_type}.{field_name}",
-                            observed_value=concept_id,
-                            expected={"applicable_service_types": applicable_types},
-                            confidence=0.75,
-                            evidence={"original_value": original_value},
-                            review_action="verify_service_step_type_or_concept",
                         )
                     )
 
