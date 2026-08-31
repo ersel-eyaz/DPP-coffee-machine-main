@@ -1018,6 +1018,118 @@ def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyF
     return findings
 
 
+_PAIRED_REPLACEMENT_ENTITY_TYPES = {
+    "RefurbishmentServiceStep",
+    "RemanufacturingServiceStep",
+}
+
+
+def _replacement_pairs(
+    entity: HarmonizedEntity,
+) -> list[tuple[int, str, HarmonizedEntity, str]]:
+    """Return replacement pairs with their structural relation path."""
+    if entity.entity_type == "ReplaceServiceStep":
+        replaced_part_id = _field_value(entity, "ReplaceServiceStep.replacedPartId")
+        new_part = _single_embedded_child(entity, "newPart")
+        if not isinstance(replaced_part_id, str) or new_part is None:
+            return []
+        return [(0, replaced_part_id, new_part, "ReplaceServiceStep.newPart")]
+
+    if entity.entity_type in _PAIRED_REPLACEMENT_ENTITY_TYPES:
+        relation_name = "replacedAndNewParts"
+        return [
+            (
+                index,
+                replaced_part_id,
+                new_part,
+                f"{entity.entity_type}.{relation_name}",
+            )
+            for index, (replaced_part_id, new_part) in enumerate(
+                entity.paired_embedded_entities.get(relation_name, [])
+            )
+        ]
+
+    return []
+
+
+def _apply_service_replacement_consistency_checks(
+    result: HarmonizationResult,
+) -> list[AnomalyFinding]:
+    """Check physical identity and static-type consistency for replacements."""
+    findings: list[AnomalyFinding] = []
+
+    for service_entity in result.iter_entities():
+        for pair_index, old_part_id, new_part, relation_path in _replacement_pairs(
+            service_entity
+        ):
+            evidence = {
+                "check_method": "rule_based",
+                "pair_index": pair_index,
+                "old_part_id": old_part_id,
+                "new_part_id": new_part.entity_id,
+            }
+
+            if old_part_id == new_part.entity_id:
+                findings.append(
+                    AnomalyFinding(
+                        check_id="replacement_instance_id_reused",
+                        category="consistency",
+                        severity="error",
+                        message=(
+                            "A replacement must introduce a new physical part instance; "
+                            f"the existing and replacement ids are both {old_part_id!r}."
+                        ),
+                        entity_id=service_entity.entity_id,
+                        entity_type=service_entity.entity_type,
+                        relation_path=relation_path,
+                        observed_value={
+                            "old_part_id": old_part_id,
+                            "new_part_id": new_part.entity_id,
+                        },
+                        expected={"different_instance_ids": True},
+                        evidence=evidence,
+                        review_action="assign_distinct_replacement_instance_id",
+                    )
+                )
+
+            old_part = result.find_entity(old_part_id)
+            if old_part is None or old_part.entity_type != "PartInstance":
+                continue
+            if new_part.entity_type != "PartInstance":
+                continue
+
+            old_static_id = _single_relation_target(old_part, "partStaticLink")
+            new_static_id = _single_relation_target(new_part, "partStaticLink")
+            if old_static_id is None or new_static_id is None:
+                continue
+            if old_static_id == new_static_id:
+                continue
+
+            findings.append(
+                AnomalyFinding(
+                    check_id="replacement_part_static_mismatch",
+                    category="consistency",
+                    severity="error",
+                    message=(
+                        "The replacement part instance references a different static part "
+                        "definition than the replaced instance."
+                    ),
+                    entity_id=service_entity.entity_id,
+                    entity_type=service_entity.entity_type,
+                    relation_path=relation_path,
+                    observed_value={
+                        "old_part_static_link": old_static_id,
+                        "new_part_static_link": new_static_id,
+                    },
+                    expected={"part_static_link": old_static_id},
+                    evidence=evidence,
+                    review_action="select_replacement_of_same_part_type",
+                )
+            )
+
+    return findings
+
+
 _SERVICE_PART_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "RepairServiceStep": ("repairedPartId",),
     "ReplaceServiceStep": ("replacedPartId",),
@@ -1097,6 +1209,7 @@ def analyze_harmonization_result(
         findings.extend(_apply_emission_scope_category_checks(result))
     elif result.scope_name == "service":
         findings.extend(_apply_numeric_range_rules(result, SERVICE_NUMERIC_RANGE_RULES))
+        findings.extend(_apply_service_replacement_consistency_checks(result))
         findings.extend(_apply_service_semantic_checks(result))
 
     ml_analysis = build_ml_anomaly_analysis(extract_feature_rows(result), options=ml_options)

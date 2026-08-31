@@ -23,6 +23,57 @@ def _field(path: str, value: object) -> HarmonizedField:
     )
 
 
+def _replacement_document(
+    service_type: str,
+    *,
+    old_part_id: str = "part-old-001",
+    new_part_id: str = "part-new-001",
+    old_static_id: str = "part-static-001",
+    new_static_id: str = "part-static-001",
+    include_old_part: bool = True,
+    include_static_parts: bool = True,
+) -> dict[str, object]:
+    """Build one service-scope replacement scenario for focused checks."""
+    new_part = {
+        "@id": new_part_id,
+        "@type": "dpp:PartInstance",
+        "partStaticLink": {"@id": new_static_id},
+    }
+    service_step: dict[str, object] = {
+        "@id": f"{service_type}-001",
+        "@type": f"dpp:{service_type}",
+    }
+    if service_type == "ReplaceServiceStep":
+        service_step.update(
+            {
+                "replacedPartId": old_part_id,
+                "newPart": new_part,
+            }
+        )
+    else:
+        service_step["replacedAndNewParts"] = [[old_part_id, new_part]]
+
+    graph: list[dict[str, object]] = []
+    if include_static_parts:
+        graph.append({"@id": old_static_id, "@type": "dpp:PartStatic"})
+        if new_static_id != old_static_id:
+            graph.append({"@id": new_static_id, "@type": "dpp:PartStatic"})
+    if include_old_part:
+        graph.append(
+            {
+                "@id": old_part_id,
+                "@type": "dpp:PartInstance",
+                "partStaticLink": {"@id": old_static_id},
+            }
+        )
+    graph.append(service_step)
+
+    return {
+        "@context": {"dpp": "https://example.org/dpp#"},
+        "@graph": graph,
+    }
+
+
 class AnomalyServiceTests(unittest.TestCase):
     def test_direct_relation_target_type_mismatch_is_reported(self) -> None:
         document = {
@@ -655,6 +706,128 @@ class AnomalyServiceTests(unittest.TestCase):
             ],
         )
         self.assertEqual([], entity.relations)
+
+    def test_service_scope_preserves_part_static_context(self) -> None:
+        result = harmonize_document(
+            _replacement_document("ReplaceServiceStep"),
+            "service",
+        )
+
+        old_part = result.entities["part-old-001"]
+        new_part = result.entities["ReplaceServiceStep-001"].embedded_entities[
+            "newPart"
+        ][0]
+
+        self.assertEqual("PartStatic", result.entities["part-static-001"].entity_type)
+        self.assertEqual(
+            ["part-static-001"],
+            [relation.target_entity_id for relation in old_part.relations],
+        )
+        self.assertEqual(
+            ["part-static-001"],
+            [relation.target_entity_id for relation in new_part.relations],
+        )
+
+    def test_replacement_structures_accept_distinct_instances_of_same_static_part(self) -> None:
+        for service_type in (
+            "ReplaceServiceStep",
+            "RemanufacturingServiceStep",
+            "RefurbishmentServiceStep",
+        ):
+            with self.subTest(service_type=service_type):
+                anomaly = analyze_harmonization_result(
+                    harmonize_document(
+                        _replacement_document(service_type),
+                        "service",
+                    )
+                )
+                check_ids = {finding.check_id for finding in anomaly.findings}
+
+                self.assertNotIn("replacement_instance_id_reused", check_ids)
+                self.assertNotIn("replacement_part_static_mismatch", check_ids)
+
+    def test_replacement_structures_reject_reused_instance_id(self) -> None:
+        for service_type in (
+            "ReplaceServiceStep",
+            "RemanufacturingServiceStep",
+            "RefurbishmentServiceStep",
+        ):
+            with self.subTest(service_type=service_type):
+                anomaly = analyze_harmonization_result(
+                    harmonize_document(
+                        _replacement_document(
+                            service_type,
+                            new_part_id="part-old-001",
+                        ),
+                        "service",
+                    )
+                )
+                finding = next(
+                    item
+                    for item in anomaly.findings
+                    if item.check_id == "replacement_instance_id_reused"
+                )
+
+                self.assertEqual("error", finding.severity)
+                self.assertEqual(
+                    {
+                        "old_part_id": "part-old-001",
+                        "new_part_id": "part-old-001",
+                    },
+                    finding.observed_value,
+                )
+
+    def test_replacement_structures_reject_different_static_part(self) -> None:
+        for service_type in (
+            "ReplaceServiceStep",
+            "RemanufacturingServiceStep",
+            "RefurbishmentServiceStep",
+        ):
+            with self.subTest(service_type=service_type):
+                anomaly = analyze_harmonization_result(
+                    harmonize_document(
+                        _replacement_document(
+                            service_type,
+                            new_static_id="part-static-002",
+                        ),
+                        "service",
+                    )
+                )
+                finding = next(
+                    item
+                    for item in anomaly.findings
+                    if item.check_id == "replacement_part_static_mismatch"
+                )
+
+                self.assertEqual("error", finding.severity)
+                self.assertEqual(
+                    {
+                        "old_part_static_link": "part-static-001",
+                        "new_part_static_link": "part-static-002",
+                    },
+                    finding.observed_value,
+                )
+
+    def test_incomplete_replacement_context_is_not_inferred(self) -> None:
+        for service_type in (
+            "ReplaceServiceStep",
+            "RemanufacturingServiceStep",
+            "RefurbishmentServiceStep",
+        ):
+            with self.subTest(service_type=service_type):
+                anomaly = analyze_harmonization_result(
+                    harmonize_document(
+                        _replacement_document(
+                            service_type,
+                            include_old_part=False,
+                        ),
+                        "service",
+                    )
+                )
+                check_ids = {finding.check_id for finding in anomaly.findings}
+
+                self.assertNotIn("replacement_instance_id_reused", check_ids)
+                self.assertNotIn("replacement_part_static_mismatch", check_ids)
 
     def test_negative_service_cost_message_names_negative_value(self) -> None:
         document = {

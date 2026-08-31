@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from dpp.data_quality.scopes.schemas import CanonicalField, CanonicalRelation, ScopeDefinition
 
-
 _SERVICE_STEP_ENTITIES = (
     "SecondaryValueStep",
     "RepairServiceStep",
@@ -20,7 +19,7 @@ _SERVICE_STEP_ENTITIES = (
     "RefurbishmentServiceStep",
     "RemanufacturingServiceStep",
 )
-_SERVICE_CONTEXT_ENTITIES = ("PartInstance",)
+_SERVICE_CONTEXT_ENTITIES = ("PartStatic", "PartInstance")
 
 
 _SERVICE_ACTION_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
@@ -82,6 +81,15 @@ SERVICE_SCOPE = ScopeDefinition(
         )
     ),
     relations=(
+        CanonicalRelation(
+            source_entity_type="PartInstance",
+            relation_name="partStaticLink",
+            target_entity_type="PartStatic",
+            description=(
+                "Static part definition retained as context for replacement-instance "
+                "compatibility checks."
+            ),
+        ),
         CanonicalRelation(
             source_entity_type="ReplaceServiceStep",
             relation_name="newPart",
