@@ -4,6 +4,17 @@
   },
   "@graph": [
     {
+      "@id": "part-static-thermostat-001",
+      "@type": "dpp:PartStatic"
+    },
+    {
+      "@id": "part-thermostat-001",
+      "@type": "dpp:PartInstance",
+      "dpp:partStaticLink": {
+        "@id": "part-static-thermostat-001"
+      }
+    },
+    {
       "@id": "service-anomaly-cleaning-001",
       "@type": "dpp:CleaningServiceStep",
       "diagnose": "broken switch",

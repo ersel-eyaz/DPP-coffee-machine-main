@@ -75,6 +75,80 @@ def _replacement_document(
 
 
 class AnomalyServiceTests(unittest.TestCase):
+    def test_single_link_with_multiple_targets_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "instance-001",
+                    "@type": "dpp:DPPInstance",
+                    "dppStaticLink": [
+                        {"@id": "static-001"},
+                        {"@id": "static-002"},
+                    ],
+                },
+                {"@id": "static-001", "@type": "dpp:DPPStatic"},
+                {"@id": "static-002", "@type": "dpp:DPPStatic"},
+            ],
+        }
+
+        anomaly = analyze_harmonization_result(harmonize_document(document, "product"))
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "relation_cardinality_exceeded"
+        )
+
+        self.assertEqual("DPPInstance.dppStaticLink", finding.relation_path)
+        self.assertEqual(2, finding.observed_value["target_count"])
+        self.assertEqual(1, finding.expected["maximum_target_count"])
+
+    def test_single_embedded_relation_with_multiple_children_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "record-001",
+                    "@type": "dpp:GHGEmissionRecord",
+                    "activity": [
+                        {"@id": "activity-001", "@type": "dpp:ActivityData"},
+                        {"@id": "activity-002", "@type": "dpp:ActivityData"},
+                    ],
+                    "emission_factor": {
+                        "@id": "factor-001",
+                        "@type": "dpp:EmissionFactor",
+                    },
+                }
+            ],
+        }
+
+        anomaly = analyze_harmonization_result(harmonize_document(document, "emission"))
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "relation_cardinality_exceeded"
+        )
+
+        self.assertEqual("GHGEmissionRecord.activity", finding.relation_path)
+        self.assertEqual(2, finding.observed_value["target_count"])
+
+    def test_service_part_instance_without_static_link_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {"@id": "part-001", "@type": "dpp:PartInstance"},
+            ],
+        }
+
+        anomaly = analyze_harmonization_result(harmonize_document(document, "service"))
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "missing_required_relation"
+        )
+
+        self.assertEqual("PartInstance.partStaticLink", finding.relation_path)
+
     def test_direct_relation_target_type_mismatch_is_reported(self) -> None:
         document = {
             "@context": {"dpp": "https://example.org/dpp#"},
@@ -808,7 +882,7 @@ class AnomalyServiceTests(unittest.TestCase):
                     finding.observed_value,
                 )
 
-    def test_incomplete_replacement_context_is_not_inferred(self) -> None:
+    def test_unresolved_replacement_source_is_reported(self) -> None:
         for service_type in (
             "ReplaceServiceStep",
             "RemanufacturingServiceStep",
@@ -826,8 +900,54 @@ class AnomalyServiceTests(unittest.TestCase):
                 )
                 check_ids = {finding.check_id for finding in anomaly.findings}
 
+                self.assertIn("replacement_source_part_unresolved", check_ids)
                 self.assertNotIn("replacement_instance_id_reused", check_ids)
                 self.assertNotIn("replacement_part_static_mismatch", check_ids)
+
+    def test_replacement_source_with_wrong_entity_type_is_reported(self) -> None:
+        document = _replacement_document(
+            "ReplaceServiceStep",
+            include_old_part=False,
+        )
+        document["@graph"].append(
+            {"@id": "part-old-001", "@type": "dpp:DPPStatic"}
+        )
+
+        anomaly = analyze_harmonization_result(harmonize_document(document, "service"))
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "replacement_source_part_type_mismatch"
+        )
+
+        self.assertEqual("DPPStatic", finding.observed_value["target_entity_type"])
+        self.assertEqual({"target_entity_type": "PartInstance"}, finding.expected)
+
+    def test_replace_step_without_source_part_id_is_reported(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {"@id": "part-static-001", "@type": "dpp:PartStatic"},
+                {
+                    "@id": "replace-001",
+                    "@type": "dpp:ReplaceServiceStep",
+                    "newPart": {
+                        "@id": "part-new-001",
+                        "@type": "dpp:PartInstance",
+                        "partStaticLink": {"@id": "part-static-001"},
+                    },
+                },
+            ],
+        }
+
+        anomaly = analyze_harmonization_result(harmonize_document(document, "service"))
+        finding = next(
+            item
+            for item in anomaly.findings
+            if item.check_id == "replacement_source_part_missing"
+        )
+
+        self.assertEqual("ReplaceServiceStep.replacedPartId", finding.field_path)
 
     def test_negative_service_cost_message_names_negative_value(self) -> None:
         document = {

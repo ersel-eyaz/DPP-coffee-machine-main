@@ -142,8 +142,8 @@ def _single_embedded_child(entity: HarmonizedEntity, relation_name: str) -> Harm
     return children[0] if children else None
 
 
-def _apply_required_relation_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
-    """Check required embedded properties and true reference targets."""
+def _apply_relation_structure_checks(result: HarmonizationResult) -> list[AnomalyFinding]:
+    """Check relation presence, target integrity, type, and upper cardinality."""
     scope = SUPPORTED_SCOPES[result.scope_name]
     findings: list[AnomalyFinding] = []
     relations_by_source: dict[str, list[CanonicalRelation]] = {}
@@ -200,15 +200,19 @@ def _apply_required_relation_checks(result: HarmonizationResult) -> list[Anomaly
 
         for relation in configured_relations:
             children: list[HarmonizedEntity] = []
+            target_ids: list[str] = []
             if relation.representation == "embedded":
                 children = _embedded_children(entity, relation.relation_name)
+                target_ids = [child.entity_id for child in children]
                 present = bool(children)
             elif relation.representation == "paired_embedded":
                 pairs = entity.paired_embedded_entities.get(relation.relation_name, [])
                 children = [child for _, child in pairs]
+                target_ids = [child.entity_id for child in children]
                 present = bool(pairs)
             else:
-                present = bool(_relation_targets(entity, relation.relation_name))
+                target_ids = _relation_targets(entity, relation.relation_name)
+                present = bool(target_ids)
 
             if relation.representation in {"embedded", "paired_embedded"}:
                 for child in children:
@@ -234,6 +238,31 @@ def _apply_required_relation_checks(result: HarmonizationResult) -> list[Anomaly
                             review_action="verify_relation_target_type",
                         )
                     )
+
+            if not relation.is_collection and len(target_ids) > 1:
+                findings.append(
+                    AnomalyFinding(
+                        check_id="relation_cardinality_exceeded",
+                        category="relationship",
+                        severity="warning",
+                        message=(
+                            f"Structural property {relation.path} contains {len(target_ids)} targets; "
+                            "at most one is allowed."
+                        ),
+                        entity_id=entity.entity_id,
+                        entity_type=entity.entity_type,
+                        relation_path=relation.path,
+                        observed_value={
+                            "target_count": len(target_ids),
+                            "target_entity_ids": target_ids,
+                        },
+                        expected={
+                            "maximum_target_count": 1,
+                            "target_entity_type": relation.target_entity_type,
+                        },
+                        review_action="verify_relation_cardinality",
+                    )
+                )
 
             if not relation.required:
                 continue
@@ -1059,6 +1088,27 @@ def _apply_service_replacement_consistency_checks(
     findings: list[AnomalyFinding] = []
 
     for service_entity in result.iter_entities():
+        if service_entity.entity_type == "ReplaceServiceStep":
+            replaced_part_id = _field_value(
+                service_entity,
+                "ReplaceServiceStep.replacedPartId",
+            )
+            if not isinstance(replaced_part_id, str) or not replaced_part_id.strip():
+                findings.append(
+                    AnomalyFinding(
+                        check_id="replacement_source_part_missing",
+                        category="relationship",
+                        severity="warning",
+                        message="ReplaceServiceStep requires the id of the part being replaced.",
+                        entity_id=service_entity.entity_id,
+                        entity_type=service_entity.entity_type,
+                        field_path="ReplaceServiceStep.replacedPartId",
+                        observed_value=replaced_part_id,
+                        expected={"target_entity_type": "PartInstance"},
+                        review_action="provide_replaced_part_reference",
+                    )
+                )
+
         for pair_index, old_part_id, new_part, relation_path in _replacement_pairs(
             service_entity
         ):
@@ -1093,7 +1143,48 @@ def _apply_service_replacement_consistency_checks(
                 )
 
             old_part = result.find_entity(old_part_id)
-            if old_part is None or old_part.entity_type != "PartInstance":
+            if old_part is None:
+                findings.append(
+                    AnomalyFinding(
+                        check_id="replacement_source_part_unresolved",
+                        category="relationship",
+                        severity="warning",
+                        message=(
+                            f"Replacement source id {old_part_id!r} does not resolve to an "
+                            "entity in the supplied structure."
+                        ),
+                        entity_id=service_entity.entity_id,
+                        entity_type=service_entity.entity_type,
+                        relation_path=relation_path,
+                        observed_value=old_part_id,
+                        expected={"target_entity_type": "PartInstance"},
+                        evidence=evidence,
+                        review_action="verify_replaced_part_reference",
+                    )
+                )
+                continue
+            if old_part.entity_type != "PartInstance":
+                findings.append(
+                    AnomalyFinding(
+                        check_id="replacement_source_part_type_mismatch",
+                        category="relationship",
+                        severity="warning",
+                        message=(
+                            f"Replacement source id {old_part_id!r} resolves to entity type "
+                            f"{old_part.entity_type!r}; expected 'PartInstance'."
+                        ),
+                        entity_id=service_entity.entity_id,
+                        entity_type=service_entity.entity_type,
+                        relation_path=relation_path,
+                        observed_value={
+                            "target_entity_id": old_part_id,
+                            "target_entity_type": old_part.entity_type,
+                        },
+                        expected={"target_entity_type": "PartInstance"},
+                        evidence=evidence,
+                        review_action="verify_replaced_part_reference",
+                    )
+                )
                 continue
             if new_part.entity_type != "PartInstance":
                 continue
@@ -1192,7 +1283,7 @@ def analyze_harmonization_result(
         raise AnomalyServiceError(f"Unsupported scope: {result.scope_name!r}")
 
     findings: list[AnomalyFinding] = []
-    findings.extend(_apply_required_relation_checks(result))
+    findings.extend(_apply_relation_structure_checks(result))
 
     if result.scope_name == "product":
         findings.extend(_apply_numeric_range_rules(result, PRODUCT_NUMERIC_RANGE_RULES))

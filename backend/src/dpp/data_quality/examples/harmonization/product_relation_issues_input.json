@@ -24,9 +24,14 @@
     {
       "@id": "dpp-instance-relation-demo-001",
       "@type": "dpp:DPPInstance",
-      "schema:isVariantOf": {
-        "@id": "part-instance-relation-demo-001"
-      },
+      "schema:isVariantOf": [
+        {
+          "@id": "dpp-static-relation-demo-001"
+        },
+        {
+          "@id": "part-instance-relation-demo-001"
+        }
+      ],
       "dpp:partInstnceLink": {
         "@id": "part-instance-relation-demo-001"
       }

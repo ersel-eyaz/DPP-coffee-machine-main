@@ -53,8 +53,10 @@ EXAMPLES = {
     "enum_fuzzy": ("emission", "harmonization/enum_fuzzy_input.json"),
     "enum_semantic": ("emission", "harmonization/enum_semantic_input.json"),
     "emission_anomaly": ("emission", "harmonization/emission_anomaly_input.json"),
+    "emission_relation_issues": ("emission", "harmonization/emission_relation_issues_input.json"),
     "mixed_dirty": ("product", "harmonization/mixed_dirty_input.json"),
     "service_anomaly": ("service", "harmonization/service_anomaly_input.json"),
+    "service_relation_issues": ("service", "harmonization/service_relation_issues_input.json"),
     "service_text": ("service", "harmonization/service_text_input.json"),
     "service_semantic": ("service", "harmonization/service_semantic_input.json"),
 }

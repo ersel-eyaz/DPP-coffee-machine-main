@@ -85,6 +85,7 @@ SERVICE_SCOPE = ScopeDefinition(
             source_entity_type="PartInstance",
             relation_name="partStaticLink",
             target_entity_type="PartStatic",
+            required=True,
             description=(
                 "Static part definition retained as context for replacement-instance "
                 "compatibility checks."

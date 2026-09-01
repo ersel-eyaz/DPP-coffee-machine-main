@@ -959,6 +959,94 @@ class CleanJsonLdOutputTests(unittest.TestCase):
         self.assertEqual("DPPInstance.dppStaticLink", mismatch.relation_path)
         self.assertEqual("PartInstance", mismatch.observed_value["target_entity_type"])
 
+        cardinality = next(
+            finding
+            for finding in anomaly.findings
+            if finding.check_id == "relation_cardinality_exceeded"
+        )
+        self.assertEqual("DPPInstance.dppStaticLink", cardinality.relation_path)
+        self.assertEqual(2, cardinality.observed_value["target_count"])
+
+    def test_emission_relation_issue_example_covers_missing_and_multiple_children(self) -> None:
+        document = _load_example("emission_relation_issues_input.json")
+        anomaly = analyze_harmonization_result(
+            harmonize_document(document, "emission")
+        )
+
+        cardinality = next(
+            finding
+            for finding in anomaly.findings
+            if finding.check_id == "relation_cardinality_exceeded"
+        )
+        missing = next(
+            finding
+            for finding in anomaly.findings
+            if finding.check_id == "missing_required_embedded_object"
+        )
+
+        self.assertEqual("GHGEmissionRecord.activity", cardinality.relation_path)
+        self.assertEqual("GHGEmissionRecord.emission_factor", missing.relation_path)
+
+    def test_service_relation_issue_example_covers_replacement_structure(self) -> None:
+        document = _load_example("service_relation_issues_input.json")
+        anomaly = analyze_harmonization_result(
+            harmonize_document(document, "service")
+        )
+
+        findings_by_id = {
+            finding.check_id: finding
+            for finding in anomaly.findings
+            if finding.check_id
+            in {
+                "missing_required_relation",
+                "replacement_part_static_mismatch",
+                "replacement_source_part_unresolved",
+            }
+        }
+
+        self.assertEqual(
+            "PartInstance.partStaticLink",
+            findings_by_id["missing_required_relation"].relation_path,
+        )
+        self.assertEqual(
+            "ReplaceServiceStep.newPart",
+            findings_by_id["replacement_part_static_mismatch"].relation_path,
+        )
+        self.assertEqual(
+            "RefurbishmentServiceStep.replacedAndNewParts",
+            findings_by_id["replacement_source_part_unresolved"].relation_path,
+        )
+
+    def test_standard_service_examples_do_not_trigger_relation_structure_findings(self) -> None:
+        structural_check_ids = {
+            "missing_required_relation",
+            "missing_required_embedded_object",
+            "dangling_relation_target",
+            "relation_target_type_mismatch",
+            "relation_cardinality_exceeded",
+            "replacement_source_part_missing",
+            "replacement_source_part_unresolved",
+            "replacement_source_part_type_mismatch",
+            "replacement_instance_id_reused",
+            "replacement_part_static_mismatch",
+        }
+
+        for filename in (
+            "service_anomaly_input.json",
+            "service_semantic_input.json",
+            "service_text_input.json",
+        ):
+            with self.subTest(filename=filename):
+                document = _load_example(filename)
+                anomaly = analyze_harmonization_result(
+                    harmonize_document(document, "service")
+                )
+                self.assertTrue(
+                    structural_check_ids.isdisjoint(
+                        finding.check_id for finding in anomaly.findings
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

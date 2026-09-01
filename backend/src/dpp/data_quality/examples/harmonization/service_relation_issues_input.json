@@ -1,0 +1,54 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "part-static-pump-001",
+      "@type": "dpp:PartStatic"
+    },
+    {
+      "@id": "part-static-valve-001",
+      "@type": "dpp:PartStatic"
+    },
+    {
+      "@id": "part-old-pump-001",
+      "@type": "dpp:PartInstance",
+      "partStaticLink": {
+        "@id": "part-static-pump-001"
+      }
+    },
+    {
+      "@id": "part-without-static-link-001",
+      "@type": "dpp:PartInstance"
+    },
+    {
+      "@id": "replace-relation-demo-001",
+      "@type": "dpp:ReplaceServiceStep",
+      "replacedPartId": "part-old-pump-001",
+      "newPart": {
+        "@id": "part-new-valve-001",
+        "@type": "dpp:PartInstance",
+        "partStaticLink": {
+          "@id": "part-static-valve-001"
+        }
+      }
+    },
+    {
+      "@id": "refurbishment-relation-demo-001",
+      "@type": "dpp:RefurbishmentServiceStep",
+      "replacedAndNewParts": [
+        [
+          "part-not-supplied-001",
+          {
+            "@id": "part-new-pump-001",
+            "@type": "dpp:PartInstance",
+            "partStaticLink": {
+              "@id": "part-static-pump-001"
+            }
+          }
+        ]
+      ]
+    }
+  ]
+}

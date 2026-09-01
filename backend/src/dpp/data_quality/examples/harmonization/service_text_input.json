@@ -4,6 +4,17 @@
   },
   "@graph": [
     {
+      "@id": "part-static-grinder-001",
+      "@type": "dpp:PartStatic"
+    },
+    {
+      "@id": "part-grinder-001",
+      "@type": "dpp:PartInstance",
+      "dpp:partStaticLink": {
+        "@id": "part-static-grinder-001"
+      }
+    },
+    {
       "@id": "service-repair-001",
       "@type": "dpp:RepairServiceStep",
       "diagnose": "Seal wear in 3-way valve",
@@ -23,7 +34,14 @@
         "uneven puck surface"
       ],
       "replacementCost": 59.0,
-      "replacedPart": "part-grinder-001"
+      "replacedPart": "part-grinder-001",
+      "dpp:newPart": {
+        "@id": "part-grinder-replacement-001",
+        "@type": "dpp:PartInstance",
+        "dpp:partStaticLink": {
+          "@id": "part-static-grinder-001"
+        }
+      }
     },
     {
       "@id": "service-cleaning-001",

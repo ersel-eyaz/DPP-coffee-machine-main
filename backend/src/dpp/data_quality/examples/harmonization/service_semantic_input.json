@@ -4,6 +4,17 @@
   },
   "@graph": [
     {
+      "@id": "part-static-grinder-001",
+      "@type": "dpp:PartStatic"
+    },
+    {
+      "@id": "part-grinder-001",
+      "@type": "dpp:PartInstance",
+      "dpp:partStaticLink": {
+        "@id": "part-static-grinder-001"
+      }
+    },
+    {
       "@id": "service-semantic-replace-001",
       "@type": "dpp:ReplaceServiceStep",
       "diagnose": "the grinder blades are no longer sharp",
@@ -11,6 +22,14 @@
         "coffee extraction is uneven and watery",
         "the ground coffee particles vary a lot from cup to cup"
       ],
+      "replacedPartId": "part-grinder-001",
+      "dpp:newPart": {
+        "@id": "part-grinder-replacement-001",
+        "@type": "dpp:PartInstance",
+        "dpp:partStaticLink": {
+          "@id": "part-static-grinder-001"
+        }
+      },
       "costEur": 64.0
     },
     {

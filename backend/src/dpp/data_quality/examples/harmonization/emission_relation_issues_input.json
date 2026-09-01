@@ -1,0 +1,30 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#"
+  },
+  "@graph": [
+    {
+      "@id": "emission-relation-demo-001",
+      "@type": "dpp:GHGEmissionRecord",
+      "activity": [
+        {
+          "@id": "activity-relation-demo-001",
+          "@type": "dpp:ActivityData",
+          "activity_type": "distance_traveled",
+          "quantity": 25.0,
+          "unit": "km"
+        },
+        {
+          "@id": "activity-relation-demo-002",
+          "@type": "dpp:ActivityData",
+          "activity_type": "distance_traveled",
+          "quantity": 30.0,
+          "unit": "km"
+        }
+      ],
+      "scope": "scope_3",
+      "scope3_category": "business_travel",
+      "emissions_kg_co2e": 3.0
+    }
+  ]
+}
