@@ -100,6 +100,7 @@ class AnomalyMlTests(unittest.TestCase):
             features={
                 "operatingHRS": 5000.0,
                 "brewingCount": 5.0,
+                "target_only_feature": 1.0,
             },
         )
 
@@ -124,6 +125,11 @@ class AnomalyMlTests(unittest.TestCase):
         )
         self.assertEqual("user_uploaded", profile["reference_source"])
         self.assertEqual(8, profile["reference_rows"])
+        self.assertEqual(["brewingCount", "operatingHRS"], profile["used_feature_names"])
+        self.assertEqual(
+            ["brewingCount", "operatingHRS"],
+            profile["isolation_forest_feature_names"],
+        )
 
         isolation_findings = [
             finding

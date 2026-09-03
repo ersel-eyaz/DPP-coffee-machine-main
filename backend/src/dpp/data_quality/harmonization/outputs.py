@@ -24,6 +24,8 @@ from dpp.data_quality.harmonization.free_text import (
 )
 from dpp.data_quality.harmonization.mapper import (
     AMBIGUOUS_FUZZY_THRESHOLD as AMBIGUOUS_FIELD_FUZZY_THRESHOLD,
+)
+from dpp.data_quality.harmonization.mapper import (
     AUTO_FUZZY_THRESHOLD as AUTO_FIELD_FUZZY_THRESHOLD,
 )
 from dpp.data_quality.harmonization.normalizers import (
@@ -41,7 +43,6 @@ from dpp.data_quality.harmonization.result_access import effective_field_value
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
 from dpp.data_quality.harmonization.unit_registry import unit_binding_for_field
 from dpp.data_quality.scopes import SUPPORTED_SCOPES
-
 
 DEFAULT_JSONLD_CONTEXT = {
     "schema": "https://schema.org/",
@@ -458,7 +459,10 @@ def _issue_guidance(
         if (field.get("label") or field.get("original_label")) == field_label and field.get("guidance") is not None:
             return field["guidance"]
 
-    return _unmapped_field_guidance(scope_name, entity_type)
+    # Guidance is only valid when the issue can be traced back to a mapped
+    # field failure or an actually unmapped input label.  Falling back to
+    # label guidance here would mislabel successful value-level matches.
+    return None
 
 
 def _with_issue_guidance(

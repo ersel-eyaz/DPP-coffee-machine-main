@@ -22,8 +22,6 @@ from dpp.data_quality.harmonization.mapper import (
 )
 from dpp.data_quality.harmonization.normalizers import (
     NormalizationError,
-    allowed_source_units_for_target,
-    canonical_enum_values_for_path,
     find_unit_label_candidates,
     normalize_enum_value,
     normalize_unit_label,
@@ -342,49 +340,6 @@ def _normalize_controlled_vocabulary_field(canonical_path: str, value: Any) -> s
     """Normalize a controlled-vocabulary field by canonical match, alias, or conservative fuzzy fallback."""
     scalar_value, _ = _extract_value_and_unit(value)
     return normalize_enum_value(canonical_path, scalar_value)
-
-
-def _expected_unit_hint(canonical_field: CanonicalField) -> str | None:
-    """Return a field-specific expected-unit hint for failed value normalization."""
-    if canonical_field.target_unit is None:
-        return None
-
-    allowed_units = ", ".join(sorted(allowed_source_units_for_target(canonical_field.target_unit)))
-    return (
-        f" Field {canonical_field.path!r} expects values convertible to "
-        f"{canonical_field.target_unit!r}; accepted source units: {allowed_units}."
-    )
-
-
-def _expected_explicit_unit_hint(canonical_path: str) -> str | None:
-    """Return expected values for explicit legacy unit-code fields."""
-    allowed_units = _allowed_units_for_unit_field(canonical_path)
-    if allowed_units is None:
-        return None
-
-    return f" Expected unit values for {canonical_path!r}: {', '.join(sorted(allowed_units))}."
-
-
-def _expected_value_hint(canonical_field: CanonicalField) -> str:
-    """Return field-aware value guidance after a mapped field fails value normalization."""
-    if canonical_field.role == "controlled_vocabulary":
-        options = canonical_enum_values_for_path(canonical_field.path)
-        if options:
-            return f" Expected values for {canonical_field.path!r}: {', '.join(options)}."
-
-    if canonical_field.role == "unit_harmonization":
-        unit_hint = _expected_explicit_unit_hint(canonical_field.path)
-        if unit_hint is not None:
-            return unit_hint
-
-    unit_hint = _expected_unit_hint(canonical_field)
-    if unit_hint is not None:
-        return unit_hint
-
-    if canonical_field.role == "label_harmonization":
-        return f" Field {canonical_field.path!r} expects a numeric value."
-
-    return ""
 
 
 def _free_text_kind_for_path(canonical_path: str) -> str:
@@ -1054,13 +1009,12 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
                 normalized_unit = None
                 status = "error"
                 error_detail = str(exc).rstrip(".")
-                expected_hint = _expected_value_hint(canonical_field)
                 issues.append(
                     HarmonizationIssue(
                         severity="error",
                         message=(
                             f"Value for {canonical_field.path!r} could not be normalized: "
-                            f"{error_detail}.{expected_hint}"
+                            f"{error_detail}."
                         ),
                         entity_id=parsed_entity.entity_id,
                         entity_type=parsed_entity.entity_type,

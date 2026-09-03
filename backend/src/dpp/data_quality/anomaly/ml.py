@@ -208,6 +208,28 @@ def _common_feature_names(target: FeatureRow, reference_rows: list[FeatureRow]) 
     return sorted(names)
 
 
+def _used_feature_names(target_rows: list[FeatureRow], reference_rows: list[FeatureRow]) -> list[str]:
+    """Return feature names used by at least one target in the statistical checks."""
+    return sorted(
+        {
+            feature_name
+            for target in target_rows
+            for feature_name in _common_feature_names(target, reference_rows)
+        }
+    )
+
+
+def _shared_feature_names(target_rows: list[FeatureRow], reference_rows: list[FeatureRow]) -> list[str]:
+    """Return feature names shared by all targets and all reference rows."""
+    if not target_rows:
+        return []
+    return sorted(
+        set.intersection(
+            *(set(_common_feature_names(target, reference_rows)) for target in target_rows),
+        )
+    )
+
+
 def _quantile(values: list[float], q: float) -> float:
     """Return a simple interpolated quantile."""
     if not values:
@@ -460,6 +482,16 @@ def _ml_metadata(
                     "usable": len(profile.rows) >= _MIN_REFERENCE_ROWS,
                     "minimum_reference_rows": _MIN_REFERENCE_ROWS,
                     "description": profile.description,
+                    "used_feature_names": (
+                        _used_feature_names(rows_by_profile.get(key, []), profile.rows)
+                        if len(profile.rows) >= _MIN_REFERENCE_ROWS
+                        else []
+                    ),
+                    "isolation_forest_feature_names": (
+                        _shared_feature_names(rows_by_profile.get(key, []), profile.rows)
+                        if options.isolation_forest.enabled and len(profile.rows) >= _MIN_REFERENCE_ROWS
+                        else []
+                    ),
                 }
                 for key, profile in sorted(profiles.items())
                 if key in visible_profile_keys
@@ -558,11 +590,7 @@ def build_ml_anomaly_analysis(
                     )
                 )
 
-        shared_feature_names = sorted(
-            set.intersection(
-                *(set(_common_feature_names(target, profile.rows)) for target in target_rows),
-            )
-        )
+        shared_feature_names = _shared_feature_names(target_rows, profile.rows)
         if not shared_feature_names:
             continue
 

@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
@@ -20,6 +21,7 @@ from dpp.data_quality.harmonization.feedback import (
 from dpp.data_quality.harmonization.free_text import normalize_text_value
 from dpp.data_quality.harmonization.mapper import map_field_label
 from dpp.data_quality.harmonization.normalizers import (
+    EnumNormalizationCandidate,
     normalize_enum_value,
     normalize_unit_label,
     normalize_value_to_unit,
@@ -409,12 +411,15 @@ class FieldAwareWarningTests(unittest.TestCase):
         entity = result.entities["dpp-static-unit-unsupported-001"]
 
         issue_messages = [issue.message for issue in entity.issues]
-        self.assertTrue(
-            any(
-                "DPPStatic.weightGRM" in message
-                and "accepted source units: GRM, kg, mg" in message
-                for message in issue_messages
-            )
+        self.assertTrue(any("DPPStatic.weightGRM" in message for message in issue_messages))
+        self.assertFalse(any("accepted source units" in message for message in issue_messages))
+
+        report = build_harmonization_report(result)
+        field = report["entities"]["dpp-static-unit-unsupported-001"]["fields"]["DPPStatic.weightGRM"]
+        self.assertEqual("expected_unit_or_numeric_value", field["guidance"]["kind"])
+        self.assertEqual(
+            {"GRM", "kg", "mg"},
+            {target["id"] for target in field["guidance"]["targets"]},
         )
 
     def test_mapped_enum_error_reports_expected_canonical_values(self) -> None:
@@ -432,13 +437,8 @@ class FieldAwareWarningTests(unittest.TestCase):
         result = harmonize_document(document, "emission")
         entity = result.entities["record-invalid-enum-001"]
 
-        self.assertTrue(
-            any(
-                "Expected values for 'GHGEmissionRecord.scope': scope_1, scope_2, scope_3"
-                in issue.message
-                for issue in entity.issues
-            )
-        )
+        self.assertTrue(any("could not be normalized" in issue.message for issue in entity.issues))
+        self.assertFalse(any("Expected values for" in issue.message for issue in entity.issues))
 
 
 class UnitAliasTests(unittest.TestCase):
@@ -502,20 +502,10 @@ class UnitAliasTests(unittest.TestCase):
         activity_issues = [issue.message for issue in result.entities["activity-minutes-001"].issues]
         factor_issues = [issue.message for issue in result.entities["factor-per-unit-001"].issues]
 
-        self.assertTrue(
-            any(
-                "Expected unit values for 'ActivityData.unit': kWh, kg, km, ltr, m, m3, t, unit"
-                in message
-                for message in activity_issues
-            )
-        )
-        self.assertTrue(
-            any(
-                "Expected unit values for 'EmissionFactor.unit': kgCO2e/kWh, kgCO2e/kg, kgCO2e/km"
-                in message
-                for message in factor_issues
-            )
-        )
+        self.assertTrue(any("could not be normalized" in message for message in activity_issues))
+        self.assertTrue(any("could not be normalized" in message for message in factor_issues))
+        self.assertFalse(any("Expected unit values for" in message for message in activity_issues))
+        self.assertFalse(any("Expected unit values for" in message for message in factor_issues))
 
 
 class HarmonizationReportGuidanceTests(unittest.TestCase):
@@ -563,6 +553,50 @@ class HarmonizationReportGuidanceTests(unittest.TestCase):
         self.assertTrue(
             any(target["id"] == "electricity_consumption" for target in field["guidance"]["targets"])
         )
+
+        issue = report["entities"]["activity-enum-guidance-001"]["issues"][0]
+        self.assertEqual("allowed_enum_values", issue["guidance"]["kind"])
+        self.assertNotIn("Expected values for", issue["message"])
+
+    def test_successful_semantic_value_match_has_no_unmapped_label_guidance(self) -> None:
+        document = {
+            "@context": {"dpp": "https://example.org/dpp#"},
+            "@graph": [
+                {
+                    "@id": "record-semantic-guidance-001",
+                    "@type": "dpp:GHGEmissionRecord",
+                    "dpp:scope": "emissions from purchased electricity and heating",
+                }
+            ],
+        }
+        candidate = EnumNormalizationCandidate(
+            original_value="emissions from purchased electricity and heating",
+            canonical_value="scope_2",
+            confidence=0.70,
+            match_type="semantic",
+        )
+
+        with (
+            patch(
+                "dpp.data_quality.harmonization.services.normalize_enum_value",
+                return_value="scope_2",
+            ),
+            patch(
+                "dpp.data_quality.harmonization.services.resolve_enum_value",
+                return_value=candidate,
+            ),
+        ):
+            result = harmonize_document(document, "emission")
+        report = build_harmonization_report(result)
+        issues = [
+            issue
+            for entity in report["entities"].values()
+            for issue in entity["issues"]
+            if issue["severity"] == "info" and "semantic embedding match" in issue["message"]
+        ]
+
+        self.assertEqual(1, len(issues))
+        self.assertTrue(all("guidance" not in issue for issue in issues))
 
     def test_unit_field_report_lists_expected_units(self) -> None:
         document = {

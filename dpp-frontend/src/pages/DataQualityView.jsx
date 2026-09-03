@@ -28,12 +28,37 @@ function prettyJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
-function JsonPanel({ title, value }) {
+function downloadJson(value, fileName, mimeType = "application/json") {
+  if (value == null) return;
+
+  const blob = new Blob([prettyJson(value)], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function JsonPanel({ title, value, fileName, mimeType }) {
   return (
     <Card className="h-100">
       <Card.Header className="d-flex align-items-center justify-content-between">
         <span className="fw-semibold">{title}</span>
-        <Badge bg="secondary">JSON</Badge>
+        <div className="d-flex align-items-center gap-2">
+          <Badge bg="secondary">JSON</Badge>
+          <Button
+            variant="outline-primary"
+            size="sm"
+            disabled={value == null}
+            onClick={() => downloadJson(value, fileName, mimeType)}
+          >
+            <Download className="me-1" aria-hidden="true" />
+            Download
+          </Button>
+        </div>
       </Card.Header>
       <Card.Body className="p-0">
         <pre className="m-0 p-3 bg-light dq-json-scroll" style={{ minHeight: 320, maxHeight: 560, fontSize: "0.84rem" }}>
@@ -112,25 +137,25 @@ function ThresholdSummary({ label, profiles }) {
 function GuidancePanel({ guidance }) {
   if (!guidance) return null;
   const targets = Array.isArray(guidance.targets) ? guidance.targets : [];
-  const visibleTargets = targets.slice(0, 10);
   return (
     <div className="border rounded bg-light py-2 px-2 mt-2 mb-0">
       <div className="small fw-semibold">{guidance.message || "Expected targets"}</div>
-      {visibleTargets.length > 0 && (
-        <div className="small mt-1 d-flex flex-wrap gap-1">
-          {visibleTargets.map((target, index) => (
+      {targets.length > 0 && (
+        <div className="small mt-1 d-flex flex-wrap gap-1 dq-guidance-targets">
+          {targets.map((target, index) => (
             <Badge key={`${target.id || target.label || index}`} bg="light" text="dark" className="border">
               {target.id || target.label}
               {target.target_unit ? ` · ${target.target_unit}` : ""}
             </Badge>
           ))}
-          {targets.length > visibleTargets.length && (
-            <Badge bg="secondary">+{targets.length - visibleTargets.length} more</Badge>
-          )}
         </div>
       )}
     </div>
   );
+}
+
+function isControlledValueGuidance(guidance) {
+  return guidance?.kind === "allowed_enum_values";
 }
 
 function sameThresholdProfiles(left, right) {
@@ -232,10 +257,10 @@ function SummaryBadges({ result, onBadgeClick }) {
               type="button"
               className="dq-summary-badge"
               bg="secondary"
-              title="Show parsed entities"
+              title="Show processed model objects"
               onClick={() => onBadgeClick?.("entities")}
             >
-              Entities {harmonization.entities_total ?? 0}
+              Model objects {harmonization.entities_total ?? 0}
             </Badge>
           </Col>
           {!serviceScope && (
@@ -431,14 +456,14 @@ function HarmonizationTable({ report }) {
         <Table size="sm" hover className="mb-0 align-middle">
           <thead>
             <tr>
-              <th>Entity</th>
+              <th>Model object</th>
               <th>Input label</th>
               <th>Output term</th>
               <th>Canonical field</th>
               <th>Changed part</th>
               <th>Status</th>
-              <th>Input value</th>
-              <th>Harmonized value</th>
+              <th className="dq-value-column">Input value</th>
+              <th className="dq-value-column">Harmonized value</th>
               <th>Label check</th>
               <th>Value check</th>
             </tr>
@@ -463,8 +488,10 @@ function HarmonizationTable({ report }) {
                 <td>
                   <Badge bg={statusVariant(row.status)}>{row.status}</Badge>
                 </td>
-                <td className="dq-json-cell">{prettyJson(row.original_value)}</td>
-                <td className="dq-json-cell">{row.normalized_value == null ? "-" : prettyJson(row.normalized_value)}</td>
+                <td className="dq-json-cell dq-value-column">{prettyJson(row.original_value)}</td>
+                <td className="dq-json-cell dq-value-column">
+                  {row.normalized_value == null ? "-" : prettyJson(row.normalized_value)}
+                </td>
                 <td>{formatMethod(row.field_method || row.method, row.field_confidence ?? row.confidence)}</td>
                 <td>{formatMethod(row.value_method, row.value_confidence)}</td>
               </tr>
@@ -496,7 +523,7 @@ function TextConceptTable({ report }) {
         <Table size="sm" hover className="mb-0 align-middle">
           <thead>
             <tr>
-              <th>Entity</th>
+              <th>Model object</th>
               <th>Field</th>
               <th>Input text</th>
               <th>Status</th>
@@ -535,16 +562,29 @@ function AnomalyTable({ report }) {
     return <Alert variant="success">No anomaly findings.</Alert>;
   }
 
+  function observedValue(value) {
+    if (typeof value === "undefined") return "-";
+    if (value === null || typeof value !== "object") return prettyJson(value);
+
+    const detailCount = Array.isArray(value) ? value.length : Object.keys(value).length;
+    return (
+      <details className="dq-observed-details">
+        <summary>Show details ({detailCount})</summary>
+        <pre>{prettyJson(value)}</pre>
+      </details>
+    );
+  }
+
   return (
     <Card>
-      <Card.Header className="fw-semibold">Anomaly Findings</Card.Header>
+      <Card.Header className="fw-semibold">Anomaly Findings ({findings.length})</Card.Header>
       <div className="table-responsive dq-table-scroll">
         <Table size="sm" hover className="mb-0 align-middle">
           <thead>
             <tr>
               <th>Severity</th>
               <th>Check</th>
-              <th>Entity</th>
+              <th>Model object</th>
               <th>Message</th>
               <th>Observed</th>
               <th>Review</th>
@@ -567,9 +607,7 @@ function AnomalyTable({ report }) {
                   </div>
                 </td>
                 <td>{finding.message}</td>
-                <td className="dq-json-cell">
-                  {typeof finding.observed_value === "undefined" ? "-" : prettyJson(finding.observed_value)}
-                </td>
+                <td className="dq-json-cell">{observedValue(finding.observed_value)}</td>
                 <td>{finding.review_action || "-"}</td>
               </tr>
             ))}
@@ -601,7 +639,7 @@ function SummaryModal({ type, result, onHide }) {
   const vocabularyThresholdProfiles = collectThresholdProfiles(vocabularyFields, "value_thresholds");
 
   let title = "Summary";
-  if (type === "entities") title = "Entities";
+  if (type === "entities") title = "Model Objects";
   if (type === "changed-fields") title = "Changed Labels / Values";
   if (type === "unmapped") title = "Unmapped Labels";
   if (type === "harmonization-issues") title = "Harmonization Notes";
@@ -781,7 +819,13 @@ function SummaryModal({ type, result, onHide }) {
                     <div className="small text-muted mt-1">
                       {issue.entity_type || "-"} · {issue.entity_id || "-"}
                     </div>
-                    <GuidancePanel guidance={issue.guidance} />
+                    {isControlledValueGuidance(issue.guidance) ? (
+                      <div className="small text-muted mt-2">
+                        Permitted targets are listed under Controlled Vocabulary Values.
+                      </div>
+                    ) : (
+                      <GuidancePanel guidance={issue.guidance} />
+                    )}
                   </Card.Body>
                 </Card>
               ))}
@@ -934,7 +978,7 @@ function SummaryModal({ type, result, onHide }) {
 
         {type === "entities" && !entities.length && (
           <Alert variant="secondary" className="mb-0">
-            No entities.
+            No model objects.
           </Alert>
         )}
         {type === "changed-fields" && !changedFields.length && <Alert variant="secondary">No changed fields.</Alert>}
@@ -955,6 +999,7 @@ export default function DataQualityView() {
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
   const [exampleLoading, setExampleLoading] = useState("");
+  const [selectedExampleName, setSelectedExampleName] = useState("");
   const [selectedSummary, setSelectedSummary] = useState(null);
   const [showIsolationConfig, setShowIsolationConfig] = useState(false);
   const [isolationEstimators, setIsolationEstimators] = useState("100");
@@ -965,6 +1010,10 @@ export default function DataQualityView() {
   const [isolationReferenceRows, setIsolationReferenceRows] = useState([]);
   const [isolationReferenceFileName, setIsolationReferenceFileName] = useState("");
   const [isolationReferenceErr, setIsolationReferenceErr] = useState(null);
+  const [isolationConfigErr, setIsolationConfigErr] = useState(null);
+  const [isolationConfigWarning, setIsolationConfigWarning] = useState(null);
+  const [isolationReferenceInputKey, setIsolationReferenceInputKey] = useState(0);
+  const isolationConfigSnapshotRef = useRef(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -992,6 +1041,7 @@ export default function DataQualityView() {
 
   async function readFile(file) {
     if (!file) return;
+    setSelectedExampleName("");
     setFileName(file.name);
     setText(await file.text());
     setResult(null);
@@ -1081,7 +1131,7 @@ export default function DataQualityView() {
     const productWeight = numericCell(row, "product_weightGRM", rowNumber, { required: false });
     const activePartWeight = numericCell(row, "active_part_weightGRM", rowNumber, { required: false });
     const materialRatio = numericCell(row, "max_material_weight_to_part_weight", rowNumber, { required: false });
-    const entityId = textCell(row, "entity_id", rowNumber);
+    const entityId = row.entity_id?.trim() || `uploaded-reference-${String(rowIndex + 1).padStart(3, "0")}`;
     const features = {
       operatingHRS: operating,
       brewingCount: brewing,
@@ -1113,7 +1163,7 @@ export default function DataQualityView() {
   function emissionReferenceRow(row, rowIndex) {
     const rowNumber = rowIndex + 2;
     const quantity = numericCell(row, "quantity", rowNumber);
-    const entityId = textCell(row, "entity_id", rowNumber);
+    const entityId = row.entity_id?.trim() || `uploaded-reference-${String(rowIndex + 1).padStart(3, "0")}`;
     const activityUnit = textCell(row, "activity_unit", rowNumber);
     const factorUnit = textCell(row, "factor_unit", rowNumber);
     const factorValue = numericCell(row, "factor_value", rowNumber);
@@ -1162,13 +1212,13 @@ export default function DataQualityView() {
     if (csvType === "product") {
       requireColumns(
         headers,
-        ["entity_id", "operatingHRS", "brewingCount", "cleaningCount", "chalkCount", "coffeeGrindingCount"],
+        ["operatingHRS", "brewingCount", "cleaningCount", "chalkCount", "coffeeGrindingCount"],
         "Product raw usage",
       );
     } else {
       requireColumns(
         headers,
-        ["entity_id", "quantity", "activity_unit", "factor_value", "factor_unit", "reported_emissions"],
+        ["quantity", "activity_unit", "factor_value", "factor_unit", "reported_emissions"],
         "Emission raw calculation",
       );
     }
@@ -1185,6 +1235,8 @@ export default function DataQualityView() {
   async function readIsolationReferenceFile(file) {
     if (!file) return;
     setIsolationReferenceErr(null);
+    setIsolationConfigErr(null);
+    setIsolationConfigWarning(null);
     setIsolationReferenceFileName(file.name);
     try {
       if (!file.name.toLowerCase().endsWith(".csv")) {
@@ -1192,10 +1244,95 @@ export default function DataQualityView() {
       }
       const normalizedRows = parseReferenceCsv(await file.text(), isolationReferenceCsvType);
       setIsolationReferenceRows(normalizedRows);
-      setResult(null);
     } catch (error) {
       setIsolationReferenceRows([]);
       setIsolationReferenceErr(error?.message || String(error));
+    }
+  }
+
+  function openIsolationConfig() {
+    isolationConfigSnapshotRef.current = {
+      estimators: isolationEstimators,
+      contamination: isolationContamination,
+      maxSamples: isolationMaxSamples,
+      randomState: isolationRandomState,
+      referenceCsvType: isolationReferenceCsvType,
+      referenceRows: isolationReferenceRows,
+      referenceFileName: isolationReferenceFileName,
+      referenceErr: isolationReferenceErr,
+    };
+    setIsolationConfigErr(null);
+    setIsolationConfigWarning(null);
+    setIsolationReferenceInputKey((value) => value + 1);
+    setShowIsolationConfig(true);
+  }
+
+  function isIsolationConfigDirty() {
+    const snapshot = isolationConfigSnapshotRef.current;
+    if (!snapshot) return false;
+    return isolationEstimators !== snapshot.estimators
+      || isolationContamination !== snapshot.contamination
+      || isolationMaxSamples !== snapshot.maxSamples
+      || isolationRandomState !== snapshot.randomState
+      || isolationReferenceCsvType !== snapshot.referenceCsvType
+      || isolationReferenceFileName !== snapshot.referenceFileName
+      || isolationReferenceErr !== snapshot.referenceErr
+      || stableJson(isolationReferenceRows) !== stableJson(snapshot.referenceRows);
+  }
+
+  function cancelIsolationConfig() {
+    const snapshot = isolationConfigSnapshotRef.current;
+    if (snapshot) {
+      setIsolationEstimators(snapshot.estimators);
+      setIsolationContamination(snapshot.contamination);
+      setIsolationMaxSamples(snapshot.maxSamples);
+      setIsolationRandomState(snapshot.randomState);
+      setIsolationReferenceCsvType(snapshot.referenceCsvType);
+      setIsolationReferenceRows(snapshot.referenceRows);
+      setIsolationReferenceFileName(snapshot.referenceFileName);
+      setIsolationReferenceErr(snapshot.referenceErr);
+    }
+    isolationConfigSnapshotRef.current = null;
+    setIsolationConfigErr(null);
+    setIsolationConfigWarning(null);
+    setIsolationReferenceInputKey((value) => value + 1);
+    setShowIsolationConfig(false);
+  }
+
+  function dismissIsolationConfig() {
+    if (isIsolationConfigDirty()) {
+      setIsolationConfigWarning(
+        "Unsaved changes have not been applied. Select Apply to save them or Cancel to discard them.",
+      );
+      return;
+    }
+    cancelIsolationConfig();
+  }
+
+  function resetIsolationParameters() {
+    setIsolationEstimators("100");
+    setIsolationContamination("0.15");
+    setIsolationMaxSamples("");
+    setIsolationRandomState("42");
+    setIsolationConfigErr(null);
+    setIsolationConfigWarning(null);
+  }
+
+  function applyIsolationConfig() {
+    try {
+      isolationOptionsPayload();
+      if (isolationReferenceRows.length > 0 && isolationReferenceRows.length < 8) {
+        throw new Error(
+          "Uploaded reference data requires at least 8 rows. Add more rows or clear the upload to use the built-in reference data.",
+        );
+      }
+      isolationConfigSnapshotRef.current = null;
+      setIsolationConfigErr(null);
+      setIsolationConfigWarning(null);
+      setResult(null);
+      setShowIsolationConfig(false);
+    } catch (error) {
+      setIsolationConfigErr(error?.message || String(error));
     }
   }
 
@@ -1214,8 +1351,11 @@ export default function DataQualityView() {
     if (maxSamples !== null && (!Number.isFinite(maxSamples) || maxSamples <= 0)) {
       throw new Error("Isolation Forest max_samples must be empty or greater than 0.");
     }
-    if (!Number.isInteger(randomState)) {
-      throw new Error("Isolation Forest random_state must be an integer.");
+    if (maxSamples !== null && maxSamples > 1 && !Number.isInteger(maxSamples)) {
+      throw new Error("Isolation Forest max_samples values above 1 must be integer row counts.");
+    }
+    if (!Number.isInteger(randomState) || randomState < 0 || randomState > 4294967295) {
+      throw new Error("Isolation Forest random_state must be an integer between 0 and 4294967295.");
     }
 
     return {
@@ -1275,24 +1415,14 @@ export default function DataQualityView() {
       const example = await api.getDataQualityExample(name);
       setScope(example.scope);
       setMode("both");
-      setFileName(`${example.name}.json`);
+      setSelectedExampleName(example.name);
+      setFileName(example.file_name || `${example.name}.json`);
       setText(prettyJson(example.document));
     } catch (error) {
       setErr(error?.message || String(error));
     } finally {
       setExampleLoading("");
     }
-  }
-
-  function downloadCleanJson() {
-    if (!result?.data) return;
-    const blob = new Blob([prettyJson(result.data)], { type: "application/ld+json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "clean-jsonld.json";
-    link.click();
-    URL.revokeObjectURL(url);
   }
 
   return (
@@ -1338,7 +1468,7 @@ export default function DataQualityView() {
                 <Button
                   variant="outline-secondary"
                   size="sm"
-                  onClick={() => setShowIsolationConfig(true)}
+                  onClick={openIsolationConfig}
                 >
                   Isolation Forest configuration
                 </Button>
@@ -1351,8 +1481,10 @@ export default function DataQualityView() {
                     <Button
                       key={example.name}
                       size="sm"
-                      variant="outline-secondary"
+                      variant={selectedExampleName === example.name ? "primary" : "outline-secondary"}
                       disabled={!!exampleLoading}
+                      aria-pressed={selectedExampleName === example.name}
+                      title={example.file_name || example.label}
                       onClick={() => loadExample(example.name)}
                     >
                       {exampleLoading === example.name && <Spinner animation="border" size="sm" className="me-1" />}
@@ -1392,6 +1524,14 @@ export default function DataQualityView() {
                   <FileEarmarkCode aria-hidden="true" />
                   JSON-LD
                 </Form.Label>
+                <div className="dq-input-source mb-2">
+                  <Badge bg={selectedExampleName ? "primary" : fileName ? "info" : "secondary"}>
+                    {selectedExampleName ? "Example" : fileName ? "File" : "Manual"}
+                  </Badge>
+                  <code className="dq-input-source-name" title={fileName || "Unsaved JSON-LD input"}>
+                    {fileName || "Unsaved JSON-LD input"}
+                  </code>
+                </div>
                 <Form.Control
                   as="textarea"
                   value={text}
@@ -1419,17 +1559,15 @@ export default function DataQualityView() {
                   {loading ? <Spinner animation="border" size="sm" className="me-2" /> : <PlayFill className="me-1" />}
                   Run
                 </Button>
-                <Button variant="outline-primary" disabled={!result?.data} onClick={downloadCleanJson}>
-                  <Download className="me-1" aria-hidden="true" />
-                  Download clean JSON
-                </Button>
                 <Button
                   variant="outline-secondary"
                   onClick={() => {
                     setText(EMPTY_INPUT);
                     setFileName("");
+                    setSelectedExampleName("");
                     setResult(null);
                     setErr(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
                   }}
                 >
                   Reset
@@ -1460,22 +1598,35 @@ export default function DataQualityView() {
               </Row>
             </Tab>
             <Tab eventKey="clean" title="Clean JSON">
-              <JsonPanel title="Clean JSON-LD" value={result?.data} />
+              <JsonPanel
+                title="Clean JSON-LD"
+                value={result?.data}
+                fileName="clean-jsonld.json"
+                mimeType="application/ld+json"
+              />
             </Tab>
             <Tab eventKey="harmonization" title="Harmonization Report">
-              <JsonPanel title="Harmonization Report" value={result?.harmonization_report} />
+              <JsonPanel
+                title="Harmonization Report"
+                value={result?.harmonization_report}
+                fileName="harmonization-report.json"
+              />
             </Tab>
             <Tab eventKey="anomaly" title="Anomaly Report">
-              <JsonPanel title="Anomaly Report" value={result?.anomaly_report} />
+              <JsonPanel
+                title="Anomaly Report"
+                value={result?.anomaly_report}
+                fileName="anomaly-report.json"
+              />
             </Tab>
             <Tab eventKey="full" title="Full Response">
-              <JsonPanel title="Full Response" value={result} />
+              <JsonPanel title="Full Response" value={result} fileName="data-quality-response.json" />
             </Tab>
           </Tabs>
         </Col>
       </Row>
 
-      <Modal show={showIsolationConfig} onHide={() => setShowIsolationConfig(false)} size="lg" centered>
+      <Modal show={showIsolationConfig} onHide={dismissIsolationConfig} size="lg" centered>
         <Modal.Header closeButton>
           <Modal.Title>Isolation Forest Configuration</Modal.Title>
         </Modal.Header>
@@ -1500,7 +1651,8 @@ export default function DataQualityView() {
                 value={isolationEstimators}
                 onChange={(event) => {
                   setIsolationEstimators(event.target.value);
-                  setResult(null);
+                  setIsolationConfigErr(null);
+                  setIsolationConfigWarning(null);
                 }}
               />
               <div className="small text-muted">Number of trees in the forest.</div>
@@ -1510,13 +1662,14 @@ export default function DataQualityView() {
               <Form.Control
                 size="sm"
                 type="number"
-                min="0.001"
+                min="0"
                 max="0.5"
                 step="0.01"
                 value={isolationContamination}
                 onChange={(event) => {
                   setIsolationContamination(event.target.value);
-                  setResult(null);
+                  setIsolationConfigErr(null);
+                  setIsolationConfigWarning(null);
                 }}
               />
               <div className="small text-muted">Expected outlier share in the reference data.</div>
@@ -1526,16 +1679,16 @@ export default function DataQualityView() {
               <Form.Control
                 size="sm"
                 type="number"
-                min="0.001"
                 step="1"
                 placeholder="default"
                 value={isolationMaxSamples}
                 onChange={(event) => {
                   setIsolationMaxSamples(event.target.value);
-                  setResult(null);
+                  setIsolationConfigErr(null);
+                  setIsolationConfigWarning(null);
                 }}
               />
-              <div className="small text-muted">Empty keeps the built-in default.</div>
+              <div className="small text-muted">Fraction up to 1 or integer row count; empty keeps the default.</div>
             </Col>
             <Col xs={12} md={6} lg={3}>
               <Form.Label className="small mb-1">random_state</Form.Label>
@@ -1546,7 +1699,8 @@ export default function DataQualityView() {
                 value={isolationRandomState}
                 onChange={(event) => {
                   setIsolationRandomState(event.target.value);
-                  setResult(null);
+                  setIsolationConfigErr(null);
+                  setIsolationConfigWarning(null);
                 }}
               />
               <div className="small text-muted">Reproducibility seed for repeated runs.</div>
@@ -1564,7 +1718,9 @@ export default function DataQualityView() {
                   setIsolationReferenceRows([]);
                   setIsolationReferenceFileName("");
                   setIsolationReferenceErr(null);
-                  setResult(null);
+                  setIsolationConfigErr(null);
+                  setIsolationConfigWarning(null);
+                  setIsolationReferenceInputKey((value) => value + 1);
                 }}
                 style={{ maxWidth: 320 }}
               >
@@ -1577,20 +1733,41 @@ export default function DataQualityView() {
               <div className="fw-semibold small">Expected clean CSV format</div>
               {isolationReferenceCsvType === "product" ? (
                 <div className="small">
-                  Required columns: <code>entity_id</code>, <code>operatingHRS</code>, <code>brewingCount</code>,{" "}
-                  <code>cleaningCount</code>, <code>chalkCount</code>, <code>coffeeGrindingCount</code>.
-                  Optional columns: <code>product_weightGRM</code>, <code>active_part_weightGRM</code>,{" "}
-                  <code>max_material_weight_to_part_weight</code>. The system derives product usage ratios and
-                  product/part weight ratios for the Isolation Forest feature row.
+                  <div>
+                    <span className="fw-semibold">Required columns:</span> <code>operatingHRS</code>,{" "}
+                    <code>brewingCount</code>, <code>cleaningCount</code>,{" "}
+                    <code>chalkCount</code>, <code>coffeeGrindingCount</code>
+                  </div>
+                  <div>
+                    <span className="fw-semibold">Optional columns:</span> <code>entity_id</code>,{" "}
+                    <code>product_weightGRM</code>, <code>active_part_weightGRM</code>,{" "}
+                    <code>max_material_weight_to_part_weight</code>
+                  </div>
+                  <div>
+                    <span className="fw-semibold">Derived features:</span> usage-counter ratios, brews per operating
+                    hour and, if both weight columns are available, the ratio of active-part weight to product weight
+                  </div>
                 </div>
               ) : (
                 <div className="small">
-                  Required columns: <code>entity_id</code>, <code>quantity</code>, <code>activity_unit</code>,{" "}
-                  <code>factor_value</code>, <code>factor_unit</code>, <code>reported_emissions</code>.
-                  The system derives expected emissions, calculation deviation, emission intensity, and deterministic
-                  unit compatibility for the Isolation Forest feature row.
+                  <div>
+                    <span className="fw-semibold">Required columns:</span> <code>quantity</code>, <code>activity_unit</code>,{" "}
+                    <code>factor_value</code>, <code>factor_unit</code>,{" "}
+                    <code>reported_emissions</code>
+                  </div>
+                  <div>
+                    <span className="fw-semibold">Optional column:</span> <code>entity_id</code>
+                  </div>
+                  <div>
+                    <span className="fw-semibold">Derived features:</span> expected emissions, calculation deviation,
+                    emission intensity and unit compatibility
+                  </div>
                 </div>
               )}
+              <div className="small text-muted mt-1">
+                Only features available in the analyzed input and in every uploaded reference row are used for
+                Z-score, IQR and Isolation Forest. The effective feature names are recorded in the anomaly report.
+              </div>
               <div className="small text-muted mt-1">
                 Column names and units must already be model-conform. This upload does not perform label, enum, or unit
                 harmonization.
@@ -1600,6 +1777,7 @@ export default function DataQualityView() {
             <Form.Label className="small mb-1">Reference data CSV</Form.Label>
             <div className="d-flex flex-wrap align-items-center gap-2">
               <Form.Control
+                key={isolationReferenceInputKey}
                 size="sm"
                 type="file"
                 accept=".csv,text/csv"
@@ -1619,7 +1797,9 @@ export default function DataQualityView() {
                     setIsolationReferenceRows([]);
                     setIsolationReferenceFileName("");
                     setIsolationReferenceErr(null);
-                    setResult(null);
+                    setIsolationConfigErr(null);
+                    setIsolationConfigWarning(null);
+                    setIsolationReferenceInputKey((value) => value + 1);
                   }}
                 >
                   Clear
@@ -1633,11 +1813,23 @@ export default function DataQualityView() {
               <div className="small text-danger mt-1">Reference data error: {isolationReferenceErr}</div>
             )}
           </div>
+          {isolationConfigWarning && (
+            <Alert variant="warning" className="py-2 mt-3 mb-0">{isolationConfigWarning}</Alert>
+          )}
+          {isolationConfigErr && <Alert variant="danger" className="py-2 mt-3 mb-0">{isolationConfigErr}</Alert>}
         </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowIsolationConfig(false)}>
-            Close
+        <Modal.Footer className="justify-content-between">
+          <Button variant="outline-secondary" onClick={resetIsolationParameters}>
+            Reset parameters
           </Button>
+          <div className="d-flex gap-2">
+            <Button variant="secondary" onClick={cancelIsolationConfig}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={applyIsolationConfig}>
+              Apply
+            </Button>
+          </div>
         </Modal.Footer>
       </Modal>
 

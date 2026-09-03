@@ -4,7 +4,7 @@ OpenRepairData-derived service concept registry for free-text harmonization.
 This module contains the canonical diagnosis and symptom concepts used by the
 service free-text harmonizer. Concept descriptions, validated registry surface
 forms, and soft context metadata are generated from the documented LLM API
-workflow in docs/thesis_context/notebooks/llm_alias_and_service_description_generation_2026-06-29.ipynb
+workflow in docs/thesis_context/notebooks/llm_alias_and_service_description_generation.ipynb
 using the 2026-07-10 input, prompt, and output artifacts. Trace evidence
 phrases remain in the notebook artifacts and are only accepted as registry
 surface forms after validation.

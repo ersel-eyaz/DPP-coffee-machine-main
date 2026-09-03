@@ -93,7 +93,7 @@ class DataQualityIsolationForestOptions(BaseModel):
         gt=0.0,
         description="None keeps the built-in default. Values <= 1 are treated as fractions; values > 1 as row counts.",
     )
-    random_state: int = 42
+    random_state: int = Field(42, ge=0, le=4294967295)
     reference_rows: List[DataQualityTrainingFeatureRow] = Field(default_factory=list)
     reference_description: Optional[str] = None
 
@@ -385,6 +385,11 @@ def _detect_scope(document: Dict[str, Any]) -> str:
 def _ml_options_from_request(request: DataQualityRunRequest, scope_name: str) -> MLAnomalyOptions:
     """Convert request-level anomaly options into the internal ML options object."""
     isolation = request.anomaly_options.isolation_forest
+    if isolation.max_samples is not None and isolation.max_samples > 1 and not isolation.max_samples.is_integer():
+        raise HTTPException(
+            status_code=400,
+            detail="Isolation Forest max_samples values above 1 must be integer row counts.",
+        )
     reference_rows: List[FeatureRow] = []
     for index, row in enumerate(isolation.reference_rows, start=1):
         row_scope = row.scope_name or scope_name
@@ -434,6 +439,7 @@ async def list_data_quality_examples() -> Dict[str, Any]:
             "name": name,
             "label": item["label"],
             "scope": item["scope"],
+            "file_name": Path(item["path"]).name,
         }
         for name, item in EXAMPLE_DOCUMENTS.items()
     ]
@@ -456,6 +462,7 @@ async def get_data_quality_example(example_name: str) -> Dict[str, Any]:
         "name": example_name,
         "label": item["label"],
         "scope": item["scope"],
+        "file_name": path.name,
         "document": document,
     }
 
