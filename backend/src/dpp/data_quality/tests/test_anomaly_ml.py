@@ -42,8 +42,42 @@ class AnomalyMlTests(unittest.TestCase):
         self.assertIn("iqr", check_methods)
         self.assertIn("isolation_forest", check_methods)
 
+        isolation_finding = next(
+            finding
+            for finding in findings
+            if finding.evidence["check_method"] == "isolation_forest"
+        )
+        self.assertEqual({"sklearn_prediction": 1, "meaning": "inlier"}, isolation_finding.expected)
+        self.assertEqual(-1, isolation_finding.observed_value["sklearn_prediction"])
+        self.assertIn("top_deviating_features", isolation_finding.observed_value)
+        self.assertNotIn("score", isolation_finding.evidence)
+        self.assertNotIn("sklearn_decision_function", isolation_finding.evidence)
+        self.assertNotIn("sklearn_prediction", isolation_finding.evidence)
+        self.assertNotIn("top_deviating_features", isolation_finding.evidence)
+        self.assertTrue(all("training_rows" not in finding.evidence for finding in findings))
+
     def test_service_scope_without_feature_rows_returns_no_ml_findings(self) -> None:
-        self.assertEqual([], build_ml_anomaly_findings([]))
+        analysis = build_ml_anomaly_analysis([])
+
+        self.assertEqual([], analysis.findings)
+        self.assertEqual({}, analysis.metadata)
+
+    def test_profile_without_common_features_is_not_reported_as_usable(self) -> None:
+        row = FeatureRow(
+            scope_name="product",
+            feature_set="product_usage_graph",
+            entity_id="product-without-numeric-features",
+            entity_type="DPPInstance",
+            features={},
+        )
+
+        analysis = build_ml_anomaly_analysis([row])
+        profile = analysis.metadata["statistical_ml"]["profiles"][0]
+
+        self.assertEqual([], analysis.findings)
+        self.assertFalse(profile["usable"])
+        self.assertEqual([], profile["used_feature_names"])
+        self.assertEqual([], profile["isolation_forest_feature_names"])
 
     def test_isolation_forest_can_be_disabled_while_statistical_findings_remain(self) -> None:
         row = FeatureRow(
@@ -173,6 +207,8 @@ class AnomalyMlTests(unittest.TestCase):
         )
         self.assertEqual("info", finding.severity)
         self.assertEqual("user_uploaded", finding.evidence["reference_source"])
+        self.assertEqual({"reference_rows": 1}, finding.observed_value)
+        self.assertNotIn("reference_rows", finding.evidence)
         self.assertEqual({"minimum_reference_rows": 8}, finding.expected)
 
 

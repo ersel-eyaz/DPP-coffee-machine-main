@@ -502,15 +502,22 @@ def _value_thresholds_for_field(scope_name: str, canonical_path: str) -> dict[st
     return None
 
 
-def _with_decision_thresholds(scope_name: str, canonical_path: str, field_dict: dict[str, Any]) -> dict[str, Any]:
+def _with_decision_thresholds(
+    scope_name: str,
+    canonical_path: str,
+    field_dict: dict[str, Any],
+    *,
+    include_value_thresholds: bool = True,
+) -> dict[str, Any]:
     """Attach structured threshold metadata used by the harmonization decision."""
     enriched = dict(field_dict)
 
     enriched["field_thresholds"] = dict(FIELD_LABEL_THRESHOLDS)
 
-    value_thresholds = _value_thresholds_for_field(scope_name, canonical_path)
-    if value_thresholds is not None:
-        enriched["value_thresholds"] = value_thresholds
+    if include_value_thresholds:
+        value_thresholds = _value_thresholds_for_field(scope_name, canonical_path)
+        if value_thresholds is not None:
+            enriched["value_thresholds"] = value_thresholds
 
     return enriched
 
@@ -556,13 +563,17 @@ def _format_measurement_field_for_report(field_dict: dict[str, Any]) -> dict[str
     Fields without unit metadata, including explicit unit fields such as
     ActivityData.unit, are left untouched.
     """
-    original_unit = field_dict.get("original_unit")
-    normalized_unit = field_dict.get("normalized_unit")
+    formatted = dict(field_dict)
+    # ``confidence`` is the internal backward-compatible alias of
+    # ``field_confidence``. Exposing both would duplicate the same label-mapping
+    # score in the public report.
+    formatted.pop("confidence", None)
+
+    original_unit = formatted.get("original_unit")
+    normalized_unit = formatted.get("normalized_unit")
 
     if original_unit is None and normalized_unit is None:
-        return field_dict
-
-    formatted = dict(field_dict)
+        return formatted
 
     original_measurement = _as_measurement_value(
         raw_value=formatted.get("original_value"),
@@ -597,22 +608,17 @@ def _is_free_text_source_path(canonical_path: str) -> bool:
 def _format_service_field_for_report(canonical_path: str, field_dict: dict[str, Any]) -> dict[str, Any]:
     """Return a compact report entry for service-scope fields.
 
-    Service fields are already typed by the prototype model. For fields such as
-    costEur, the harmonization layer only recognizes the canonical field and
-    preserves the value. Therefore label-confidence metadata would be noisy here.
-    Detailed concept matching remains available in the separate text_harmonization
-    section for diagnose and observedSymptoms.
+    Field-label mapping remains explicit here, including for dirty external
+    JSON-LD labels. Detailed concept matching remains available in the separate
+    text_harmonization section for diagnose and observedSymptoms.
     """
     compact: dict[str, Any] = {
         "canonical_path": field_dict.get("canonical_path"),
+        "original_label": field_dict.get("original_label"),
         "original_value": field_dict.get("original_value"),
-        "status": field_dict.get("status"),
+        "field_confidence": field_dict.get("field_confidence"),
+        "field_method": field_dict.get("field_method"),
     }
-
-    original_label = field_dict.get("original_label")
-    canonical_field_name = canonical_path.rsplit(".", maxsplit=1)[1]
-    if original_label is not None and original_label != canonical_field_name:
-        compact["input_label"] = original_label
 
     normalized_value = field_dict.get("normalized_value")
     original_value = field_dict.get("original_value")
@@ -749,9 +755,11 @@ def _build_report_summary(result: HarmonizationResult, report_entities: dict[str
     all_issues = [*result.issues, *entity_issues]
 
     field_status_counts: dict[str, int] = {}
-    for entity in result.iter_entities():
-        for field in entity.fields.values():
-            field_status_counts[field.status] = field_status_counts.get(field.status, 0) + 1
+    for entity_dict in report_entities.values():
+        for field_dict in entity_dict.get("fields", {}).values():
+            status = field_dict.get("status")
+            if isinstance(status, str):
+                field_status_counts[status] = field_status_counts.get(status, 0) + 1
 
     text_status_counts: dict[str, int] = {}
     for entity_dict in report_entities.values():
@@ -809,6 +817,7 @@ def build_harmonization_report(result: HarmonizationResult) -> dict[str, Any]:
                             canonical_path,
                             _format_service_field_for_report(canonical_path, field_dict),
                         ),
+                        include_value_thresholds=not _is_free_text_source_path(canonical_path),
                     ),
                 )
                 for canonical_path, field_dict in entity_dict.get("fields", {}).items()

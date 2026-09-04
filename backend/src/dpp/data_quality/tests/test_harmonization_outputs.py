@@ -422,6 +422,16 @@ class FieldAwareWarningTests(unittest.TestCase):
             {target["id"] for target in field["guidance"]["targets"]},
         )
 
+    def test_report_exposes_only_explicit_field_mapping_confidence(self) -> None:
+        document = _load_example("product_dirty.json")
+        result = harmonize_document(document, "product")
+
+        report = build_harmonization_report(result)
+        field = report["entities"]["dpp-static-001"]["fields"]["DPPStatic.weightGRM"]
+
+        self.assertNotIn("confidence", field)
+        self.assertEqual(1.0, field["field_confidence"])
+
     def test_mapped_enum_error_reports_expected_canonical_values(self) -> None:
         document = {
             "@context": {"dpp": "https://example.org/dpp#"},
@@ -791,6 +801,23 @@ class CleanJsonLdOutputTests(unittest.TestCase):
             field_report["RepairServiceStep.repairedPartId"]["jsonld_term"],
         )
         self.assertEqual(
+            "partRepaired",
+            field_report["RepairServiceStep.repairedPartId"]["original_label"],
+        )
+        self.assertEqual(
+            "exact_or_alias",
+            field_report["RepairServiceStep.repairedPartId"]["field_method"],
+        )
+        self.assertEqual(
+            1.0,
+            field_report["RepairServiceStep.repairedPartId"]["field_confidence"],
+        )
+        self.assertTrue(all("status" not in field for field in field_report.values()))
+        self.assertNotIn(
+            "input_label",
+            field_report["RepairServiceStep.repairedPartId"],
+        )
+        self.assertEqual(
             0.92,
             field_report["RepairServiceStep.repairedPartId"]["field_thresholds"]["automatic_fuzzy_threshold"],
         )
@@ -817,6 +844,11 @@ class CleanJsonLdOutputTests(unittest.TestCase):
         text_entry = harmonization_report["entities"]["service-anomaly-repair-001"]["text_harmonization"]["diagnose"]
         self.assertEqual("unresolved", text_entry["status"])
         self.assertEqual(0.58, text_entry["thresholds"]["automatic_semantic_threshold"])
+        service_fields = harmonization_report["entities"]["service-anomaly-repair-001"]["fields"]
+        diagnose_field = service_fields["RepairServiceStep.diagnose"]
+        self.assertNotIn("status", diagnose_field)
+        self.assertNotIn("value_thresholds", diagnose_field)
+        self.assertEqual({}, harmonization_report["summary"]["field_status_counts"])
 
         review_actions = {
             finding["review_action"]

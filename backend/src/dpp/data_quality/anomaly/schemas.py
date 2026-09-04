@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-
 FindingSeverity = Literal["info", "warning", "error"]
 FindingCategory = Literal[
     "range",
@@ -37,13 +36,13 @@ class AnomalyFinding:
         entity_type: Entity type where the finding was observed, if applicable.
         field_path: Canonical field path such as 'DPPStatic.weightGRM'.
         relation_path: Canonical relation path such as 'GHGEmissionRecord.activity'.
-        observed_value: Value observed in harmonized data.
-        expected: Compact expectation, threshold, range, or formula.
+        observed_value: Value or computed result observed during the check.
+        expected: Compact expectation, threshold, range, formula, or normal result.
         confidence: Optional confidence score when the check includes a
             non-deterministic or heuristic scoring step.
-        evidence: Additional trace context for reports. Statistical or ML-based
-            checks should store model/method identifiers, feature names, scores,
-            and thresholds here so the public report contract remains stable.
+        evidence: Additional method and traceability context for reports, such
+            as feature names, reference provenance, or model parameters. Values
+            already represented by observed_value or expected are not repeated.
         review_action: Suggested human/expert review action.
     """
 

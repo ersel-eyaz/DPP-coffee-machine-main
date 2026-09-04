@@ -20,7 +20,6 @@ from sklearn.ensemble import IsolationForest
 from dpp.data_quality.anomaly.features import FeatureRow
 from dpp.data_quality.anomaly.schemas import AnomalyFinding
 
-
 _MIN_REFERENCE_ROWS = 8
 
 
@@ -428,7 +427,6 @@ def _statistical_finding(
         "reference_source": reference_profile.source,
         "reference_description": reference_profile.description,
         "reference_rows": len(reference_profile.rows),
-        "training_rows": len(reference_profile.rows),
         "source_entity_ids": target.source_entity_ids,
     }
     if extra_evidence:
@@ -455,9 +453,39 @@ def _ml_metadata(
     rows_by_profile: dict[tuple[str, str], list[FeatureRow]],
 ) -> dict[str, Any]:
     """Return report metadata for the statistical/ML anomaly layer."""
-    visible_profile_keys = set(rows_by_profile)
-    if options.reference_rows:
-        visible_profile_keys.update((row.scope_name, row.feature_set) for row in options.reference_rows)
+    profile_metadata: list[dict[str, Any]] = []
+    for key, profile in sorted(profiles.items()):
+        if key not in rows_by_profile:
+            continue
+
+        reference_batch_sufficient = len(profile.rows) >= _MIN_REFERENCE_ROWS
+        used_feature_names = (
+            _used_feature_names(rows_by_profile[key], profile.rows)
+            if reference_batch_sufficient
+            else []
+        )
+        isolation_forest_feature_names = (
+            _shared_feature_names(rows_by_profile[key], profile.rows)
+            if options.isolation_forest.enabled and reference_batch_sufficient
+            else []
+        )
+        profile_metadata.append(
+            {
+                "scope_name": profile.scope_name,
+                "feature_set": profile.feature_set,
+                "reference_profile": profile.profile_id,
+                "reference_source": profile.source,
+                "reference_rows": len(profile.rows),
+                "target_rows": len(rows_by_profile[key]),
+                "usable": reference_batch_sufficient and bool(used_feature_names),
+                "minimum_reference_rows": _MIN_REFERENCE_ROWS,
+                "description": profile.description,
+                "used_feature_names": used_feature_names,
+                "isolation_forest_feature_names": isolation_forest_feature_names,
+            }
+        )
+    if not profile_metadata:
+        return {}
 
     return {
         "statistical_ml": {
@@ -471,31 +499,7 @@ def _ml_metadata(
                     "random_state": options.isolation_forest.random_state,
                 },
             },
-            "profiles": [
-                {
-                    "scope_name": profile.scope_name,
-                    "feature_set": profile.feature_set,
-                    "reference_profile": profile.profile_id,
-                    "reference_source": profile.source,
-                    "reference_rows": len(profile.rows),
-                    "target_rows": len(rows_by_profile.get(key, [])),
-                    "usable": len(profile.rows) >= _MIN_REFERENCE_ROWS,
-                    "minimum_reference_rows": _MIN_REFERENCE_ROWS,
-                    "description": profile.description,
-                    "used_feature_names": (
-                        _used_feature_names(rows_by_profile.get(key, []), profile.rows)
-                        if len(profile.rows) >= _MIN_REFERENCE_ROWS
-                        else []
-                    ),
-                    "isolation_forest_feature_names": (
-                        _shared_feature_names(rows_by_profile.get(key, []), profile.rows)
-                        if options.isolation_forest.enabled and len(profile.rows) >= _MIN_REFERENCE_ROWS
-                        else []
-                    ),
-                }
-                for key, profile in sorted(profiles.items())
-                if key in visible_profile_keys
-            ],
+            "profiles": profile_metadata,
         }
     }
 
@@ -540,7 +544,6 @@ def build_ml_anomaly_analysis(
                         "feature_set": key[1],
                         "reference_profile": profile.profile_id,
                         "reference_source": profile.source,
-                        "reference_rows": len(profile.rows),
                     },
                     review_action="provide_larger_reference_batch_or_use_default_reference",
                 )
@@ -623,19 +626,14 @@ def build_ml_anomaly_analysis(
                         "anomaly_score": score,
                         "sklearn_decision_function": decision,
                         "sklearn_prediction": prediction,
-                        "top_deviating_features": top_deviations[:3],
+                        "top_deviating_features": top_deviations,
                     },
-                    expected={"sklearn_prediction": -1},
+                    expected={"sklearn_prediction": 1, "meaning": "inlier"},
                     feature_names=shared_feature_names,
                     reference_profile=profile,
                     severity="warning",
                     extra_evidence={
                         "model_id": f"local_isolation_forest_{target.scope_name}_{target.feature_set}_v1",
-                        "score": score,
-                        "sklearn_decision_function": decision,
-                        "sklearn_prediction": prediction,
-                        "top_deviating_features": top_deviations,
-                        "training_rows": len(profile.rows),
                         **metadata,
                     },
                 )

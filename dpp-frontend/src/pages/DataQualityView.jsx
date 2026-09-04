@@ -270,10 +270,10 @@ function SummaryBadges({ result, onBadgeClick }) {
                 type="button"
                 className="dq-summary-badge"
               bg="secondary"
-              title="Show labels or values changed by harmonization"
+              title="Show mappings and normalizations in the internal representation; this is not a direct JSON-LD input/output diff"
               onClick={() => onBadgeClick?.("changed-fields")}
             >
-              Changed labels/values {changedFields.length}
+              Internal adjustments {changedFields.length}
             </Badge>
             </Col>
           )}
@@ -428,6 +428,13 @@ function isChangedField(field) {
   return fieldChangeTypes(field).length > 0;
 }
 
+function serviceLabelResult(field) {
+  if (field.status === "unmapped") return "unmapped";
+
+  const canonicalFieldName = field.canonical_path?.split(".").pop();
+  return field.original_label === canonicalFieldName ? "unchanged" : "mapped";
+}
+
 function changeLabel(field) {
   const changes = fieldChangeTypes(field);
   return changes.length ? changes.join(" + ") : "none";
@@ -435,6 +442,7 @@ function changeLabel(field) {
 
 function HarmonizationTable({ report }) {
   const rows = flattenHarmonizationEntities(report);
+  const serviceScope = report?.scope_name === "service";
   const fieldThresholdProfiles = collectThresholdProfiles(rows, "field_thresholds");
   const valueThresholdProfiles = collectThresholdProfiles(rows, "value_thresholds");
   if (!rows.length) {
@@ -443,7 +451,9 @@ function HarmonizationTable({ report }) {
 
   return (
     <Card>
-      <Card.Header className="fw-semibold">Harmonization Fields</Card.Header>
+      <Card.Header className="fw-semibold">
+        {serviceScope ? "Field Label Mappings" : "Harmonization Fields"}
+      </Card.Header>
       {(fieldThresholdProfiles.length > 0 || valueThresholdProfiles.length > 0) && (
         <Card.Body className="py-2 border-bottom">
           <FieldValueThresholdSummary
@@ -460,12 +470,22 @@ function HarmonizationTable({ report }) {
               <th>Input label</th>
               <th>Output term</th>
               <th>Canonical field</th>
-              <th>Changed part</th>
-              <th>Status</th>
-              <th className="dq-value-column">Input value</th>
-              <th className="dq-value-column">Harmonized value</th>
-              <th>Label check</th>
-              <th>Value check</th>
+              {serviceScope ? (
+                <>
+                  <th>Label result</th>
+                  <th className="dq-value-column">Input value</th>
+                  <th>Label check</th>
+                </>
+              ) : (
+                <>
+                  <th>Internal adjustment</th>
+                  <th>Status</th>
+                  <th className="dq-value-column">Input value</th>
+                  <th className="dq-value-column">Harmonized value</th>
+                  <th>Label check</th>
+                  <th>Value check</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -480,20 +500,34 @@ function HarmonizationTable({ report }) {
                 <td>{row.original_label || "-"}</td>
                 <td>{row.jsonld_term || "-"}</td>
                 <td>{row.canonical_path}</td>
-                <td>
-                  <Badge bg={isChangedField(row) ? "primary" : "secondary"}>
-                    {changeLabel(row)}
-                  </Badge>
-                </td>
-                <td>
-                  <Badge bg={statusVariant(row.status)}>{row.status}</Badge>
-                </td>
-                <td className="dq-json-cell dq-value-column">{prettyJson(row.original_value)}</td>
-                <td className="dq-json-cell dq-value-column">
-                  {row.normalized_value == null ? "-" : prettyJson(row.normalized_value)}
-                </td>
-                <td>{formatMethod(row.field_method || row.method, row.field_confidence ?? row.confidence)}</td>
-                <td>{formatMethod(row.value_method, row.value_confidence)}</td>
+                {serviceScope ? (
+                  <>
+                    <td>
+                      <Badge bg={statusVariant(serviceLabelResult(row))}>
+                        {serviceLabelResult(row)}
+                      </Badge>
+                    </td>
+                    <td className="dq-json-cell dq-value-column">{prettyJson(row.original_value)}</td>
+                    <td>{formatMethod(row.field_method || row.method, row.field_confidence ?? row.confidence)}</td>
+                  </>
+                ) : (
+                  <>
+                    <td>
+                      <Badge bg={isChangedField(row) ? "primary" : "secondary"}>
+                        {changeLabel(row)}
+                      </Badge>
+                    </td>
+                    <td>
+                      <Badge bg={statusVariant(row.status)}>{row.status}</Badge>
+                    </td>
+                    <td className="dq-json-cell dq-value-column">{prettyJson(row.original_value)}</td>
+                    <td className="dq-json-cell dq-value-column">
+                      {row.normalized_value == null ? "-" : prettyJson(row.normalized_value)}
+                    </td>
+                    <td>{formatMethod(row.field_method || row.method, row.field_confidence ?? row.confidence)}</td>
+                    <td>{formatMethod(row.value_method, row.value_confidence)}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -640,7 +674,7 @@ function SummaryModal({ type, result, onHide }) {
 
   let title = "Summary";
   if (type === "entities") title = "Model Objects";
-  if (type === "changed-fields") title = "Changed Labels / Values";
+  if (type === "changed-fields") title = "Internal Mappings / Normalizations";
   if (type === "unmapped") title = "Unmapped Labels";
   if (type === "harmonization-issues") title = "Harmonization Notes";
   if (type === "text-harmonization") title = "Text Harmonization";
@@ -680,6 +714,10 @@ function SummaryModal({ type, result, onHide }) {
 
         {type === "changed-fields" && changedFields.length > 0 && (
           <div className="d-flex flex-column gap-2">
+            <Alert variant="secondary" className="py-2 mb-0">
+              These entries describe mappings and normalizations in the internal representation, not a direct
+              comparison between the input and the cleaned JSON-LD output.
+            </Alert>
             {(changedFieldThresholdProfiles.length > 0 || changedValueThresholdProfiles.length > 0) && (
               <Alert variant="secondary" className="py-2 mb-0">
                 <FieldValueThresholdSummary
@@ -981,7 +1019,9 @@ function SummaryModal({ type, result, onHide }) {
             No model objects.
           </Alert>
         )}
-        {type === "changed-fields" && !changedFields.length && <Alert variant="secondary">No changed fields.</Alert>}
+        {type === "changed-fields" && !changedFields.length && (
+          <Alert variant="secondary">No internal field adjustments.</Alert>
+        )}
       </Modal.Body>
     </Modal>
   );

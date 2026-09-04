@@ -91,6 +91,7 @@ class ServiceLlmReviewTests(unittest.TestCase):
 
         self.assertEqual(1, len(findings))
         self.assertEqual("service_llm_review_unavailable", findings[0].check_id)
+        self.assertIsNone(findings[0].confidence)
         self.assertEqual("llm_service_review", findings[0].evidence["check_method"])
 
     def test_ok_review_is_reported_as_info_finding(self) -> None:

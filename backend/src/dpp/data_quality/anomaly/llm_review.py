@@ -308,7 +308,6 @@ def _unavailable_finding(reason: str) -> AnomalyFinding:
         category="review",
         severity="info",
         message=f"LLM service review was requested but is unavailable: {reason}.",
-        confidence=0.0,
         evidence={
             "check_method": "llm_service_review",
             "status": "unavailable",

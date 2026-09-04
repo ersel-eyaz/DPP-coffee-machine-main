@@ -658,7 +658,6 @@ def _apply_product_consistency_checks(result: HarmonizationResult) -> list[Anoma
                         field_path="DPPInstance.coffeeGrindingCount",
                         observed_value=grinding,
                         expected={"close_to_brewingCount": brewing, "max_relative_deviation": 0.25},
-                        confidence=0.8,
                         evidence={"relative_deviation": round(deviation, 3)},
                         review_action="inspect_counter_semantics",
                     )
@@ -786,7 +785,6 @@ def _apply_emission_calculation_checks(result: HarmonizationResult) -> list[Anom
                 field_path="GHGEmissionRecord.emissions_kg_co2e",
                 observed_value=reported,
                 expected={"quantity_x_factor": round(expected, 6), "tolerance": round(tolerance, 6)},
-                confidence=0.95,
                 evidence={
                     "activity_entity_id": activity.entity_id,
                     "factor_entity_id": factor.entity_id,
@@ -937,7 +935,6 @@ def _apply_emission_scope_category_checks(result: HarmonizationResult) -> list[A
                     field_path="GHGEmissionRecord.scope3_category",
                     observed_value=None,
                     expected="scope3_category for Scope 3 records",
-                    confidence=0.9,
                     evidence={"scope": scope_value},
                     review_action="add_or_verify_scope3_category",
                 )
@@ -956,7 +953,6 @@ def _apply_emission_scope_category_checks(result: HarmonizationResult) -> list[A
                     field_path="GHGEmissionRecord.scope3_category",
                     observed_value=scope3_category,
                     expected={"scope": "scope_3"},
-                    confidence=0.9,
                     evidence={"scope": scope_value},
                     review_action="verify_ghg_scope_or_remove_scope3_category",
                 )
@@ -999,6 +995,12 @@ def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyF
                 original_value = entry.get("original_value")
 
                 if status in {"ambiguous", "unresolved"}:
+                    candidate_key = "candidates" if status == "ambiguous" else "closest_candidates"
+                    candidate_values = entry.get(candidate_key)
+                    evidence = {"text_status": status}
+                    if candidate_values:
+                        evidence[candidate_key] = candidate_values
+
                     findings.append(
                         AnomalyFinding(
                             check_id="service_text_requires_review",
@@ -1010,8 +1012,7 @@ def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyF
                             field_path=f"{entity.entity_type}.{field_name}",
                             observed_value=original_value,
                             expected="expert-confirmed service concept",
-                            confidence=0.7,
-                            evidence={"text_status": status, "candidates": entry.get("candidates", [])},
+                            evidence=evidence,
                             review_action="confirm_or_correct_service_concept",
                         )
                     )
@@ -1035,7 +1036,6 @@ def _apply_service_semantic_checks(result: HarmonizationResult) -> list[AnomalyF
                             field_path=f"{entity.entity_type}.{field_name}",
                             observed_value=concept_id,
                             expected="core concept or user-confirmed review candidate",
-                            confidence=0.8,
                             evidence={
                                 "original_value": original_value,
                                 "inventory_status": "review_candidate",
@@ -1112,9 +1112,12 @@ def _apply_service_replacement_consistency_checks(
         for pair_index, old_part_id, new_part, relation_path in _replacement_pairs(
             service_entity
         ):
-            evidence = {
+            pair_evidence = {
                 "check_method": "rule_based",
                 "pair_index": pair_index,
+            }
+            part_id_evidence = {
+                **pair_evidence,
                 "old_part_id": old_part_id,
                 "new_part_id": new_part.entity_id,
             }
@@ -1137,7 +1140,7 @@ def _apply_service_replacement_consistency_checks(
                             "new_part_id": new_part.entity_id,
                         },
                         expected={"different_instance_ids": True},
-                        evidence=evidence,
+                        evidence=pair_evidence,
                         review_action="assign_distinct_replacement_instance_id",
                     )
                 )
@@ -1158,7 +1161,10 @@ def _apply_service_replacement_consistency_checks(
                         relation_path=relation_path,
                         observed_value=old_part_id,
                         expected={"target_entity_type": "PartInstance"},
-                        evidence=evidence,
+                        evidence={
+                            **pair_evidence,
+                            "new_part_id": new_part.entity_id,
+                        },
                         review_action="verify_replaced_part_reference",
                     )
                 )
@@ -1181,7 +1187,10 @@ def _apply_service_replacement_consistency_checks(
                             "target_entity_type": old_part.entity_type,
                         },
                         expected={"target_entity_type": "PartInstance"},
-                        evidence=evidence,
+                        evidence={
+                            **pair_evidence,
+                            "new_part_id": new_part.entity_id,
+                        },
                         review_action="verify_replaced_part_reference",
                     )
                 )
@@ -1213,7 +1222,7 @@ def _apply_service_replacement_consistency_checks(
                         "new_part_static_link": new_static_id,
                     },
                     expected={"part_static_link": old_static_id},
-                    evidence=evidence,
+                    evidence=part_id_evidence,
                     review_action="select_replacement_of_same_part_type",
                 )
             )

@@ -303,10 +303,12 @@ class AnomalyServiceTests(unittest.TestCase):
 
         anomaly = analyze_harmonization_result(result)
 
-        self.assertIn(
-            "emission_record_calculation_mismatch",
-            {finding.check_id for finding in anomaly.findings},
+        finding = next(
+            finding
+            for finding in anomaly.findings
+            if finding.check_id == "emission_record_calculation_mismatch"
         )
+        self.assertIsNone(finding.confidence)
 
     def test_emission_unit_incompatibility(self) -> None:
         result = HarmonizationResult(
@@ -668,6 +670,7 @@ class AnomalyServiceTests(unittest.TestCase):
                         "DPPInstance.brewingCount": _field("DPPInstance.brewingCount", 100),
                         "DPPInstance.cleaningCount": _field("DPPInstance.cleaningCount", 140),
                         "DPPInstance.chalkCount": _field("DPPInstance.chalkCount", 130),
+                        "DPPInstance.coffeeGrindingCount": _field("DPPInstance.coffeeGrindingCount", 20),
                     },
                 )
             },
@@ -677,6 +680,50 @@ class AnomalyServiceTests(unittest.TestCase):
         check_ids = [finding.check_id for finding in anomaly.findings]
 
         self.assertEqual(2, check_ids.count("maintenance_to_brewing_ratio_high"))
+        grinding_finding = next(
+            finding
+            for finding in anomaly.findings
+            if finding.check_id == "grinding_brewing_counter_deviation"
+        )
+        self.assertIsNone(grinding_finding.confidence)
+
+    def test_scope_category_findings_do_not_expose_fixed_confidence(self) -> None:
+        result = HarmonizationResult(
+            scope_name="emission",
+            entities={
+                "scope-3-record": HarmonizedEntity(
+                    entity_id="scope-3-record",
+                    entity_type="GHGEmissionRecord",
+                    fields={
+                        "GHGEmissionRecord.scope": _field("GHGEmissionRecord.scope", "scope_3"),
+                    },
+                ),
+                "scope-2-record": HarmonizedEntity(
+                    entity_id="scope-2-record",
+                    entity_type="GHGEmissionRecord",
+                    fields={
+                        "GHGEmissionRecord.scope": _field("GHGEmissionRecord.scope", "scope_2"),
+                        "GHGEmissionRecord.scope3_category": _field(
+                            "GHGEmissionRecord.scope3_category",
+                            "purchased_goods_and_services",
+                        ),
+                    },
+                ),
+            },
+        )
+
+        anomaly = analyze_harmonization_result(result)
+        findings = {
+            finding.check_id: finding
+            for finding in anomaly.findings
+            if finding.check_id in {"scope3_category_missing", "scope3_category_without_scope3"}
+        }
+
+        self.assertEqual(
+            {"scope3_category_missing", "scope3_category_without_scope3"},
+            set(findings),
+        )
+        self.assertTrue(all(finding.confidence is None for finding in findings.values()))
 
     def test_service_unresolved_text_requires_review(self) -> None:
         result = HarmonizationResult(
@@ -689,7 +736,14 @@ class AnomalyServiceTests(unittest.TestCase):
                         "diagnose": {
                             "status": "unresolved",
                             "original_value": "unknown ceramic resonance",
-                            "candidates": [],
+                            "closest_candidates": [
+                                {
+                                    "concept_id": "pump_fault",
+                                    "confidence": 0.31,
+                                    "method": "fuzzy",
+                                    "source": "core_registry",
+                                }
+                            ],
                         }
                     },
                 )
@@ -699,6 +753,43 @@ class AnomalyServiceTests(unittest.TestCase):
         anomaly = analyze_harmonization_result(result)
 
         self.assertEqual(["service_text_requires_review"], [finding.check_id for finding in anomaly.findings])
+        finding = anomaly.findings[0]
+        self.assertIsNone(finding.confidence)
+        self.assertNotIn("candidates", finding.evidence)
+        self.assertEqual(
+            "pump_fault",
+            finding.evidence["closest_candidates"][0]["concept_id"],
+        )
+
+    def test_service_ambiguous_text_reports_only_threshold_candidates(self) -> None:
+        candidate = {
+            "concept_id": "pump_fault",
+            "confidence": 0.8,
+            "method": "fuzzy",
+            "source": "core_registry",
+        }
+        result = HarmonizationResult(
+            scope_name="service",
+            entities={
+                "service-001": HarmonizedEntity(
+                    entity_id="service-001",
+                    entity_type="RepairServiceStep",
+                    text_harmonization={
+                        "diagnose": {
+                            "status": "ambiguous",
+                            "original_value": "pump issue",
+                            "candidates": [candidate],
+                            "closest_candidates": [candidate],
+                        }
+                    },
+                )
+            },
+        )
+
+        finding = analyze_harmonization_result(result).findings[0]
+
+        self.assertEqual([candidate], finding.evidence["candidates"])
+        self.assertNotIn("closest_candidates", finding.evidence)
 
     def test_normalized_service_concept_is_not_compared_with_generated_service_types(self) -> None:
         result = HarmonizationResult(
@@ -850,6 +941,10 @@ class AnomalyServiceTests(unittest.TestCase):
                     },
                     finding.observed_value,
                 )
+                self.assertEqual(
+                    {"check_method": "rule_based", "pair_index": 0},
+                    finding.evidence,
+                )
 
     def test_replacement_structures_reject_different_static_part(self) -> None:
         for service_type in (
@@ -881,6 +976,15 @@ class AnomalyServiceTests(unittest.TestCase):
                     },
                     finding.observed_value,
                 )
+                self.assertEqual(
+                    {
+                        "check_method": "rule_based",
+                        "pair_index": 0,
+                        "old_part_id": "part-old-001",
+                        "new_part_id": "part-new-001",
+                    },
+                    finding.evidence,
+                )
 
     def test_unresolved_replacement_source_is_reported(self) -> None:
         for service_type in (
@@ -898,11 +1002,23 @@ class AnomalyServiceTests(unittest.TestCase):
                         "service",
                     )
                 )
-                check_ids = {finding.check_id for finding in anomaly.findings}
+                findings_by_check_id = {
+                    finding.check_id: finding for finding in anomaly.findings
+                }
 
-                self.assertIn("replacement_source_part_unresolved", check_ids)
-                self.assertNotIn("replacement_instance_id_reused", check_ids)
-                self.assertNotIn("replacement_part_static_mismatch", check_ids)
+                self.assertIn("replacement_source_part_unresolved", findings_by_check_id)
+                self.assertNotIn("replacement_instance_id_reused", findings_by_check_id)
+                self.assertNotIn("replacement_part_static_mismatch", findings_by_check_id)
+                finding = findings_by_check_id["replacement_source_part_unresolved"]
+                self.assertEqual("part-old-001", finding.observed_value)
+                self.assertEqual(
+                    {
+                        "check_method": "rule_based",
+                        "pair_index": 0,
+                        "new_part_id": "part-new-001",
+                    },
+                    finding.evidence,
+                )
 
     def test_replacement_source_with_wrong_entity_type_is_reported(self) -> None:
         document = _replacement_document(
@@ -922,6 +1038,14 @@ class AnomalyServiceTests(unittest.TestCase):
 
         self.assertEqual("DPPStatic", finding.observed_value["target_entity_type"])
         self.assertEqual({"target_entity_type": "PartInstance"}, finding.expected)
+        self.assertEqual(
+            {
+                "check_method": "rule_based",
+                "pair_index": 0,
+                "new_part_id": "part-new-001",
+            },
+            finding.evidence,
+        )
 
     def test_replace_step_without_source_part_id_is_reported(self) -> None:
         document = {
@@ -1040,6 +1164,7 @@ class AnomalyServiceTests(unittest.TestCase):
 
         self.assertEqual("info", finding.severity)
         self.assertEqual("thermostat_or_rheostat_fault", finding.observed_value)
+        self.assertIsNone(finding.confidence)
         self.assertEqual("confirm_or_reject_review_candidate_concept", finding.review_action)
 
     def test_llm_relation_hint_part_mismatch_is_not_flagged_without_relation_registry(self) -> None:
