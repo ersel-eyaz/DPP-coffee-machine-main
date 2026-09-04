@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from dpp.data_quality.anomaly.llm_review import (
     _build_review_context,
@@ -11,10 +11,46 @@ from dpp.data_quality.anomaly.llm_review import (
     _findings_from_reviews,
     build_service_llm_review_findings,
 )
+from dpp.data_quality.anomaly.schemas import AnomalyFinding, AnomalyResult
 from dpp.data_quality.harmonization.schemas import HarmonizationResult, HarmonizedEntity
+from dpp.routers.data_quality import DataQualityRunRequest, run_data_quality
 
 
 class ServiceLlmReviewTests(unittest.TestCase):
+    def test_run_endpoint_preserves_anomaly_metadata_when_llm_findings_are_added(self) -> None:
+        harmonization_result = HarmonizationResult(scope_name="service")
+        anomaly_result = AnomalyResult(
+            scope_name="service",
+            metadata={"statistical_ml": {"profiles": []}},
+        )
+        llm_finding = AnomalyFinding(
+            check_id="service_llm_review_ok",
+            category="review",
+            severity="info",
+            message="No additional concern.",
+        )
+        request = DataQualityRunRequest(
+            scope="service",
+            mode="both",
+            document={"@id": "service-001", "@type": "dpp:RepairServiceStep"},
+            enable_llm_review=True,
+        )
+
+        with (
+            patch("dpp.routers.data_quality.harmonize_document", return_value=harmonization_result),
+            patch("dpp.routers.data_quality.build_clean_jsonld", return_value={}),
+            patch("dpp.routers.data_quality.build_harmonization_report", return_value={}),
+            patch("dpp.routers.data_quality.analyze_harmonization_result", return_value=anomaly_result),
+            patch(
+                "dpp.routers.data_quality.build_service_llm_review_findings",
+                new=AsyncMock(return_value=[llm_finding]),
+            ),
+        ):
+            payload = asyncio.run(run_data_quality(request))
+
+        self.assertEqual(anomaly_result.metadata, payload["anomaly_report"]["metadata"])
+        self.assertEqual(1, payload["anomaly_report"]["summary"]["findings_total"])
+
     def test_concept_context_uses_weak_terms_without_generated_service_types(self) -> None:
         context = _concept_context("does_not_turn_on")
 

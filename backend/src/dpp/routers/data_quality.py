@@ -728,6 +728,7 @@ async def run_data_quality(request: DataQualityRunRequest) -> Dict[str, Any]:
             anomaly_result = AnomalyResult(
                 scope_name=anomaly_result.scope_name,
                 findings=[*anomaly_result.findings, *llm_findings],
+                metadata=anomaly_result.metadata,
             )
 
         payload["anomaly_report"] = build_anomaly_report(anomaly_result)
