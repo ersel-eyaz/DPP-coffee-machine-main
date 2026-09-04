@@ -1,0 +1,30 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "value": "schema:value",
+    "unitCode": "schema:unitCode",
+    "additionalProperty": "schema:additionalProperty",
+    "isVariantOf": "schema:isVariantOf"
+  },
+  "@graph": [
+    {
+      "@id": "ch7-emission-record-001",
+      "@type": "dpp:GHGEmissionRecord",
+      "dpp:emissionsKgCO2e": 20.64,
+      "dpp:scope": "indirect emissions from electricity bought by the company",
+      "dpp:activity": {
+        "@type": "dpp:ActivityData",
+        "dpp:activityType": "power consumptin",
+        "dpp:quantity": 48.0,
+        "dpp:unit": "kWh"
+      },
+      "dpp:emissionFactor": {
+        "@type": "dpp:EmissionFactor",
+        "dpp:value": 0.43,
+        "dpp:unit": "kgCO2e/kWh"
+      }
+    }
+  ]
+}

@@ -7,14 +7,22 @@ import json
 import unittest
 from collections import Counter
 from pathlib import Path
+from unittest.mock import patch
 
 from dpp.data_quality.anomaly.features import FeatureRow
 from dpp.data_quality.anomaly.ml import MLAnomalyOptions
 from dpp.data_quality.anomaly.outputs import build_anomaly_report
 from dpp.data_quality.anomaly.services import analyze_harmonization_result
+from dpp.data_quality.harmonization.free_text import (
+    TextNormalizationCandidate,
+    resolve_text_value,
+)
+from dpp.data_quality.harmonization.normalizers import (
+    EnumNormalizationCandidate,
+    resolve_enum_value,
+)
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.services import harmonize_document
-
 
 SCENARIO_DIR = Path(__file__).resolve().parents[1] / "examples" / "evaluation" / "chapter7"
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "examples" / "reference"
@@ -67,9 +75,7 @@ class Chapter7BaselineTests(unittest.TestCase):
                         "chalk_to_brewing_ratio": round(chalk / brewing, 6),
                         "grinding_to_brewing_ratio": round(grinding / brewing, 6),
                         "brews_per_operating_hour": round(brewing / operating, 6),
-                        "max_material_weight_to_part_weight": float(
-                            record["max_material_weight_to_part_weight"]
-                        ),
+                        "max_material_weight_to_part_weight": float(record["max_material_weight_to_part_weight"]),
                         "product_weightGRM": product_weight,
                         "active_part_weightGRM": active_part_weight,
                         "active_part_weight_to_product_weight": round(
@@ -126,6 +132,23 @@ class Chapter7BaselineTests(unittest.TestCase):
         self.assertEqual({"value": 9300.0, "unit": "GRM"}, weight["normalized_value"])
         self.assertEqual("unit_conversion", weight["value_method"])
 
+    def test_product_similarity_scenario_uses_fuzzy_field_and_unit_matching(self) -> None:
+        baseline_clean, _, _ = self._process("product_baseline.json", "product")
+        scenario_clean, report, anomaly = self._process("product_similarity.json", "product")
+
+        self.assertEqual(baseline_clean, scenario_clean)
+        self.assertEqual(0, report["summary"]["unmapped_fields_total"])
+        self.assertEqual(2, report["summary"]["issues_total"])
+        self.assertEqual(0, anomaly["summary"]["findings_total"])
+
+        weight = report["entities"]["ch7-product-static-001"]["fields"]["DPPStatic.weightGRM"]
+        self.assertEqual("modelWeigh", weight["original_label"])
+        self.assertEqual("fuzzy", weight["field_method"])
+        self.assertAlmostEqual(0.9523809523809523, weight["field_confidence"])
+        self.assertEqual({"value": 9300.0, "unit": "GRM"}, weight["normalized_value"])
+        self.assertEqual("unit_conversion", weight["value_method"])
+        self.assertAlmostEqual(0.9333333333333333, weight["value_confidence"])
+
     def test_emission_harmonization_scenario_reconstructs_the_baseline_output(self) -> None:
         baseline_clean, _, _ = self._process("emission_baseline.json", "emission")
         scenario_clean, report, anomaly = self._process("emission_harmonization.json", "emission")
@@ -136,11 +159,64 @@ class Chapter7BaselineTests(unittest.TestCase):
         self.assertEqual({"info": 1, "warning": 0, "error": 0}, report["summary"]["issue_severity_counts"])
         self.assertEqual(0, anomaly["summary"]["findings_total"])
 
+    def test_emission_similarity_scenario_uses_fuzzy_and_semantic_value_matching(self) -> None:
+        semantic_text = "indirect emissions from electricity bought by the company"
+        semantic_candidate = EnumNormalizationCandidate(
+            original_value=semantic_text,
+            canonical_value="scope_2",
+            confidence=0.7133847540373284,
+            match_type="semantic",
+        )
+
+        def resolve_with_frozen_semantic_candidate(
+            canonical_path: str,
+            value: object,
+            auto_threshold: float = 0.95,
+            semantic_threshold: float = 0.55,
+            enable_semantic: bool = True,
+        ) -> EnumNormalizationCandidate | None:
+            if canonical_path == "GHGEmissionRecord.scope" and value == semantic_text and enable_semantic:
+                return semantic_candidate
+            return resolve_enum_value(
+                canonical_path,
+                value,
+                auto_threshold=auto_threshold,
+                semantic_threshold=semantic_threshold,
+                enable_semantic=enable_semantic,
+            )
+
+        # The real model result was verified when the fixture was frozen. The
+        # stub keeps the deterministic test suite independent of model downloads.
+        with (
+            patch(
+                "dpp.data_quality.harmonization.normalizers.resolve_enum_value",
+                side_effect=resolve_with_frozen_semantic_candidate,
+            ),
+            patch(
+                "dpp.data_quality.harmonization.services.resolve_enum_value",
+                side_effect=resolve_with_frozen_semantic_candidate,
+            ),
+        ):
+            baseline_clean, _, _ = self._process("emission_baseline.json", "emission")
+            scenario_clean, report, anomaly = self._process("emission_similarity.json", "emission")
+
+        self.assertEqual(baseline_clean, scenario_clean)
+        self.assertEqual(0, report["summary"]["unmapped_fields_total"])
+        self.assertEqual(2, report["summary"]["issues_total"])
+        self.assertEqual(0, anomaly["summary"]["findings_total"])
+
+        scope = report["entities"]["ch7-emission-record-001"]["fields"]["GHGEmissionRecord.scope"]
+        activity_type = report["entities"]["ch7-emission-record-001/activity/0"]["fields"]["ActivityData.activity_type"]
+        self.assertEqual("scope_2", scope["normalized_value"])
+        self.assertEqual("semantic", scope["value_method"])
+        self.assertAlmostEqual(0.7133847540373284, scope["value_confidence"])
+        self.assertEqual("electricity_consumption", activity_type["normalized_value"])
+        self.assertEqual("fuzzy", activity_type["value_method"])
+        self.assertAlmostEqual(0.9696969696969697, activity_type["value_confidence"])
+
     def test_service_harmonization_scenario_preserves_unresolved_text_for_review(self) -> None:
         clean, report, anomaly = self._process("service_harmonization.json", "service")
-        service_node = next(
-            entity for entity in clean["@graph"] if entity["@id"] == "ch7-service-replace-001"
-        )
+        service_node = next(entity for entity in clean["@graph"] if entity["@id"] == "ch7-service-replace-001")
         service_report = report["entities"]["ch7-service-replace-001"]
 
         self.assertEqual("heating_element_failure", service_node["dpp:diagnose"])
@@ -155,6 +231,50 @@ class Chapter7BaselineTests(unittest.TestCase):
         unresolved = service_report["text_harmonization"]["observedSymptoms"][1]
         self.assertEqual("unresolved", unresolved["status"])
         self.assertEqual(["service_text_requires_review"], [item["check_id"] for item in anomaly["findings"]])
+
+    def test_service_similarity_scenario_uses_semantic_and_fuzzy_text_matching(self) -> None:
+        semantic_text = "the electric heating component has suffered an electrical failure"
+        semantic_candidate = TextNormalizationCandidate(
+            original_text=semantic_text,
+            concept_id="heating_element_failure",
+            label="Heating element failure",
+            confidence=0.7402395355200592,
+            match_type="semantic",
+        )
+
+        def resolve_with_frozen_semantic_candidate(
+            kind: str,
+            text: object,
+            *,
+            enable_semantic: bool = True,
+        ) -> TextNormalizationCandidate | None:
+            if kind == "diagnosis" and text == semantic_text and enable_semantic:
+                return semantic_candidate
+            return resolve_text_value(kind, text, enable_semantic=enable_semantic)
+
+        # The real model result was verified when the fixture was frozen. The
+        # stub keeps the deterministic test suite independent of model downloads.
+        with patch(
+            "dpp.data_quality.harmonization.free_text.resolve_text_value",
+            side_effect=resolve_with_frozen_semantic_candidate,
+        ):
+            baseline_clean, _, _ = self._process("service_baseline.json", "service")
+            scenario_clean, report, anomaly = self._process("service_similarity.json", "service")
+
+        self.assertEqual(baseline_clean, scenario_clean)
+        self.assertEqual(0, report["summary"]["unmapped_fields_total"])
+        self.assertEqual(2, report["summary"]["issues_total"])
+        self.assertEqual(0, anomaly["summary"]["findings_total"])
+
+        text_report = report["entities"]["ch7-service-replace-001"]["text_harmonization"]
+        diagnosis = text_report["diagnose"]
+        symptom = text_report["observedSymptoms"][0]
+        self.assertEqual("heating_element_failure", diagnosis["normalized_value"])
+        self.assertEqual("semantic", diagnosis["method"])
+        self.assertAlmostEqual(0.7402395355200592, diagnosis["confidence"])
+        self.assertEqual("water_not_heating", symptom["normalized_value"])
+        self.assertEqual("fuzzy", symptom["method"])
+        self.assertAlmostEqual(0.9696969696969697, symptom["confidence"])
 
     def test_product_anomaly_scenario_has_the_frozen_findings(self) -> None:
         _, report, anomaly = self._process("product_anomaly.json", "product")
@@ -202,11 +322,7 @@ class Chapter7BaselineTests(unittest.TestCase):
                 "statistical_iqr_outlier",
                 "isolation_forest_feature_pattern_outlier",
             },
-            {
-                item["check_id"]
-                for item in anomaly["findings"]
-                if item["category"] == "statistical"
-            },
+            {item["check_id"] for item in anomaly["findings"] if item["category"] == "statistical"},
         )
 
     def test_emission_anomaly_scenario_has_the_frozen_findings(self) -> None:
