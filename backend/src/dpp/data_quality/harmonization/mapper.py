@@ -88,6 +88,12 @@ def _normalize_label(label: str) -> str:
 # Generated from the documented LLM API field-label alias workflow.
 _ENTITY_LABEL_MAPPINGS = ENTITY_LABEL_MAPPINGS
 
+# Trusted field terms emitted by the clean JSON-LD serializer that cannot be
+# derived from canonical field names or unit bindings alone.
+_TRUSTED_JSONLD_FIELD_MAPPINGS: dict[tuple[str, str], str] = {
+    ("DPPStatic", "category"): "DPPStatic.productClass",
+}
+
 def _canonical_fields_by_path(scope: ScopeDefinition) -> dict[str, CanonicalField]:
     """Return scope fields keyed by canonical path."""
     return {field.path: field for field in scope.fields}
@@ -182,6 +188,11 @@ def _find_trusted_jsonld_field_match(
     """
 
     matches: set[str] = set()
+
+    if entity_type is not None:
+        trusted_path = _TRUSTED_JSONLD_FIELD_MAPPINGS.get((entity_type, normalized_label))
+        if trusted_path in canonical_fields:
+            matches.add(trusted_path)
 
     for canonical_path, _canonical_field in _fields_for_entity(canonical_fields, entity_type):
         binding = unit_binding_for_field(canonical_path)

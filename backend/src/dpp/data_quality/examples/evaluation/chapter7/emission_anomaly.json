@@ -1,0 +1,30 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "value": "schema:value",
+    "unitCode": "schema:unitCode",
+    "additionalProperty": "schema:additionalProperty",
+    "isVariantOf": "schema:isVariantOf"
+  },
+  "@graph": [
+    {
+      "@id": "ch7-emission-record-001",
+      "@type": "dpp:GHGEmissionRecord",
+      "dpp:emissionsKgCO2e": 0.0,
+      "dpp:scope": "scope_3",
+      "dpp:activity": {
+        "@type": "dpp:ActivityData",
+        "dpp:activityType": "electricity_consumption",
+        "dpp:quantity": 48.0,
+        "dpp:unit": "kWh"
+      },
+      "dpp:emissionFactor": {
+        "@type": "dpp:EmissionFactor",
+        "dpp:value": 0.43,
+        "dpp:unit": "kgCO2e/km"
+      }
+    }
+  ]
+}

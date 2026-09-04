@@ -1,0 +1,58 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "value": "schema:value",
+    "unitCode": "schema:unitCode",
+    "additionalProperty": "schema:additionalProperty",
+    "isVariantOf": "schema:isVariantOf",
+    "priceSpecification": "schema:priceSpecification"
+  },
+  "@graph": [
+    {
+      "@id": "ch7-service-part-static-001",
+      "@type": [
+        "dpp:PartStatic",
+        "schema:ProductModel"
+      ]
+    },
+    {
+      "@id": "ch7-service-old-part-001",
+      "@type": [
+        "dpp:PartInstance",
+        "schema:Product"
+      ],
+      "isVariantOf": {
+        "@id": "ch7-service-part-static-001"
+      }
+    },
+    {
+      "@id": "ch7-service-replace-001",
+      "@type": [
+        "dpp:ReplaceServiceStep",
+        "schema:UpdateAction"
+      ],
+      "dpp:diagnose": "heating_element_failure",
+      "dpp:observedSymptoms": [
+        "water_not_heating"
+      ],
+      "priceSpecification": {
+        "@type": "schema:PriceSpecification",
+        "schema:price": 89.0,
+        "schema:priceCurrency": "EUR"
+      },
+      "dpp:replacedPartId": "ch7-service-old-part-001",
+      "dpp:newPart": {
+        "@id": "ch7-service-new-part-001",
+        "@type": [
+          "dpp:PartInstance",
+          "schema:Product"
+        ],
+        "isVariantOf": {
+          "@id": "ch7-service-part-static-001"
+        }
+      }
+    }
+  ]
+}

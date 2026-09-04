@@ -1,0 +1,161 @@
+{
+  "@context": {
+    "dpp": "https://example.org/dpp#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "value": "schema:value",
+    "unitCode": "schema:unitCode",
+    "additionalProperty": "schema:additionalProperty",
+    "isVariantOf": "schema:isVariantOf"
+  },
+  "@graph": [
+    {
+      "@id": "ch7-product-static-001",
+      "@type": [
+        "dpp:DPPStatic",
+        "schema:ProductModel"
+      ],
+      "schema:name": "BaristaCore 2500",
+      "schema:category": "Automatic coffee machine",
+      "schema:weight": {
+        "@type": "schema:QuantitativeValue",
+        "name": "weight",
+        "value": 9300.0,
+        "unitCode": "GRM"
+      },
+      "schema:height": {
+        "@type": "schema:QuantitativeValue",
+        "name": "height",
+        "value": 120.0,
+        "unitCode": "CM"
+      },
+      "schema:width": {
+        "@type": "schema:QuantitativeValue",
+        "name": "width",
+        "value": 35.0,
+        "unitCode": "CM"
+      },
+      "schema:depth": {
+        "@type": "schema:QuantitativeValue",
+        "name": "depth",
+        "value": 40.0,
+        "unitCode": "CM"
+      }
+    },
+    {
+      "@id": "ch7-part-static-001",
+      "@type": [
+        "dpp:PartStatic",
+        "schema:ProductModel"
+      ],
+      "schema:weight": {
+        "@type": "schema:QuantitativeValue",
+        "name": "weight",
+        "value": 11000.0,
+        "unitCode": "GRM"
+      },
+      "schema:height": {
+        "@type": "schema:QuantitativeValue",
+        "name": "height",
+        "value": 32.0,
+        "unitCode": "CM"
+      },
+      "schema:width": {
+        "@type": "schema:QuantitativeValue",
+        "name": "width",
+        "value": 28.0,
+        "unitCode": "CM"
+      },
+      "schema:depth": {
+        "@type": "schema:QuantitativeValue",
+        "name": "depth",
+        "value": 30.0,
+        "unitCode": "CM"
+      }
+    },
+    {
+      "@id": "ch7-material-static-001",
+      "@type": [
+        "dpp:MaterialStatic",
+        "schema:ProductModel"
+      ]
+    },
+    {
+      "@id": "ch7-part-instance-001",
+      "@type": [
+        "dpp:PartInstance",
+        "schema:Product"
+      ],
+      "isVariantOf": {
+        "@id": "ch7-part-static-001"
+      },
+      "dpp:compositeMaterials": [
+        {
+          "@id": "ch7-material-instance-001",
+          "@type": [
+            "dpp:MaterialInstance",
+            "schema:Product"
+          ],
+          "schema:weight": {
+            "@type": "schema:QuantitativeValue",
+            "name": "weight",
+            "value": 12000.0,
+            "unitCode": "GRM"
+          },
+          "additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "name": "percentRecycled",
+              "value": 30.0
+            }
+          ],
+          "dpp:purityLevel": 0.95,
+          "isVariantOf": {
+            "@id": "ch7-material-static-001"
+          }
+        }
+      ]
+    },
+    {
+      "@id": "ch7-product-instance-001",
+      "@type": [
+        "dpp:DPPInstance",
+        "schema:Product"
+      ],
+      "schema:additionalProperty": [
+        {
+          "@type": "schema:PropertyValue",
+          "name": "operatingHRS",
+          "value": 20.0,
+          "unitCode": "HRS"
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "name": "brewingCount",
+          "value": 1000.0
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "name": "cleaningCount",
+          "value": 300.0
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "name": "chalkCount",
+          "value": 250.0
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "name": "coffeeGrindingCount",
+          "value": 400.0
+        }
+      ],
+      "isVariantOf": {
+        "@id": "ch7-product-static-001"
+      },
+      "schema:hasPart": {
+        "@id": "ch7-part-instance-001"
+      }
+    }
+  ]
+}

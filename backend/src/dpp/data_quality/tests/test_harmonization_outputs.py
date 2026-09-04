@@ -43,6 +43,12 @@ def _node_by_id(document: dict, entity_id: str) -> dict:
 
 
 class VocabularyAliasTests(unittest.TestCase):
+    def test_clean_product_category_term_maps_back_to_product_class(self) -> None:
+        candidate = map_field_label("schema:category", "product", "DPPStatic")
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual("DPPStatic.productClass", candidate.canonical_path)
+
     def test_llm_generated_product_field_aliases_map_to_canonical_paths(self) -> None:
         expected_paths = {
             ("product name", "DPPStatic"): "DPPStatic.name",
