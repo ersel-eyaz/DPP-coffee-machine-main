@@ -80,6 +80,21 @@
       }
     },
     {
+      "@id": "ch7-service-replace-wrong-target-type-001",
+      "@type": [
+        "dpp:ReplaceServiceStep",
+        "schema:UpdateAction"
+      ],
+      "dpp:replacedPartId": "ch7-service-old-part-001",
+      "dpp:newPart": {
+        "@id": "ch7-service-wrong-target-001",
+        "@type": [
+          "dpp:PartStatic",
+          "schema:ProductModel"
+        ]
+      }
+    },
+    {
       "@id": "ch7-service-replace-missing-new-part-001",
       "@type": [
         "dpp:ReplaceServiceStep",

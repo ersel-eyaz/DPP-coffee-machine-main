@@ -348,6 +348,7 @@ class Chapter7BaselineTests(unittest.TestCase):
         self.assertEqual(
             {
                 "missing_required_embedded_object",
+                "relation_target_type_mismatch",
                 "replacement_part_static_mismatch",
                 "replacement_instance_id_reused",
             },
