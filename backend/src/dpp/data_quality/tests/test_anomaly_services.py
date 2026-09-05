@@ -1199,7 +1199,7 @@ class AnomalyServiceTests(unittest.TestCase):
                 ),
                 AnomalyFinding(
                     check_id="iforest_score",
-                    category="statistical",
+                    category="machine_learning",
                     severity="info",
                     message="Isolation Forest score finding.",
                     evidence={"check_method": "isolation_forest"},
@@ -1209,7 +1209,7 @@ class AnomalyServiceTests(unittest.TestCase):
 
         report = build_anomaly_report(result)
 
-        self.assertEqual({"range": 1, "statistical": 1}, report["summary"]["category_counts"])
+        self.assertEqual({"range": 1, "machine_learning": 1}, report["summary"]["category_counts"])
         self.assertEqual(
             {"rule_based": 1, "isolation_forest": 1},
             report["summary"]["check_method_counts"],

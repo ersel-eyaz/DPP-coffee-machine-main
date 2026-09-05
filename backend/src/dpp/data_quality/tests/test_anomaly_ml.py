@@ -171,6 +171,7 @@ class AnomalyMlTests(unittest.TestCase):
             if finding.evidence["check_method"] == "isolation_forest"
         ]
         self.assertTrue(isolation_findings)
+        self.assertEqual("machine_learning", isolation_findings[0].category)
         self.assertEqual("user_uploaded", isolation_findings[0].evidence["reference_source"])
         self.assertEqual(50, isolation_findings[0].evidence["n_estimators"])
         self.assertEqual(0.2, isolation_findings[0].evidence["contamination"])

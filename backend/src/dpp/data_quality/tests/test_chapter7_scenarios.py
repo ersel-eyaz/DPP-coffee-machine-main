@@ -316,13 +316,12 @@ class Chapter7BaselineTests(unittest.TestCase):
         self.assertEqual("user_uploaded", profile["reference_source"])
         self.assertEqual(10, profile["reference_rows"])
         self.assertTrue(profile["usable"])
+        findings_by_id = {item["check_id"]: item for item in anomaly["findings"]}
+        self.assertEqual("statistical", findings_by_id["statistical_z_score_outlier"]["category"])
+        self.assertEqual("statistical", findings_by_id["statistical_iqr_outlier"]["category"])
         self.assertEqual(
-            {
-                "statistical_z_score_outlier",
-                "statistical_iqr_outlier",
-                "isolation_forest_feature_pattern_outlier",
-            },
-            {item["check_id"] for item in anomaly["findings"] if item["category"] == "statistical"},
+            "machine_learning",
+            findings_by_id["isolation_forest_feature_pattern_outlier"]["category"],
         )
 
     def test_emission_anomaly_scenario_has_the_frozen_findings(self) -> None:

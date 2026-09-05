@@ -19,6 +19,7 @@ FindingCategory = Literal[
     "semantic",
     "review",
     "statistical",
+    "machine_learning",
 ]
 
 

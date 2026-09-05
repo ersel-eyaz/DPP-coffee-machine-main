@@ -18,7 +18,7 @@ import sklearn
 from sklearn.ensemble import IsolationForest
 
 from dpp.data_quality.anomaly.features import FeatureRow
-from dpp.data_quality.anomaly.schemas import AnomalyFinding
+from dpp.data_quality.anomaly.schemas import AnomalyFinding, FindingCategory
 
 _MIN_REFERENCE_ROWS = 8
 
@@ -404,10 +404,11 @@ def _isolation_forest_scores(
     return anomaly_scores, decision_scores, predictions, metadata
 
 
-def _statistical_finding(
+def _reference_based_finding(
     *,
     check_id: str,
     check_method: str,
+    category: FindingCategory,
     target: FeatureRow,
     message: str,
     observed_value: Any,
@@ -418,7 +419,7 @@ def _statistical_finding(
     confidence: float | None = None,
     extra_evidence: dict[str, Any] | None = None,
 ) -> AnomalyFinding:
-    """Create one statistical/ML finding with common metadata."""
+    """Create one statistical or ML finding with common metadata."""
     evidence = {
         "check_method": check_method,
         "feature_set": target.feature_set,
@@ -433,7 +434,7 @@ def _statistical_finding(
         evidence.update(extra_evidence)
     return AnomalyFinding(
         check_id=check_id,
-        category="statistical",
+        category=category,
         severity=severity,  # type: ignore[arg-type]
         message=message,
         entity_id=target.entity_id,
@@ -558,9 +559,10 @@ def build_ml_anomaly_analysis(
             z_deviations = _z_score_findings(target, profile.rows, feature_names)
             if z_deviations:
                 findings.append(
-                    _statistical_finding(
+                    _reference_based_finding(
                         check_id="statistical_z_score_outlier",
                         check_method="z_score",
+                        category="statistical",
                         target=target,
                         message=(
                             "One or more harmonized numeric features deviate strongly from the reference batch."
@@ -577,9 +579,10 @@ def build_ml_anomaly_analysis(
             iqr_deviations = _iqr_findings(target, profile.rows, feature_names)
             if iqr_deviations:
                 findings.append(
-                    _statistical_finding(
+                    _reference_based_finding(
                         check_id="statistical_iqr_outlier",
                         check_method="iqr",
+                        category="statistical",
                         target=target,
                         message=(
                             "One or more harmonized numeric features fall outside the IQR reference fences."
@@ -614,9 +617,10 @@ def build_ml_anomaly_analysis(
                 continue
             top_deviations = _top_feature_deviations(target, profile.rows, shared_feature_names)
             findings.append(
-                _statistical_finding(
+                _reference_based_finding(
                     check_id="isolation_forest_feature_pattern_outlier",
                     check_method="isolation_forest",
+                    category="machine_learning",
                     target=target,
                     message=(
                         "The harmonized feature vector is classified as an outlier by the Isolation Forest model."
