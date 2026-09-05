@@ -17,6 +17,7 @@ from dpp.data_quality.harmonization.feedback import (
     approve_feedback_proposal,
     create_feedback_proposal,
     load_learned_service_text_mappings,
+    load_model_scoped_service_text_mappings,
 )
 from dpp.data_quality.harmonization.free_text import normalize_text_value
 from dpp.data_quality.harmonization.mapper import map_field_label
@@ -201,6 +202,7 @@ class FeedbackProposalTests(unittest.TestCase):
             entity_type="RepairServiceStep",
             field_path="RepairServiceStep.diagnose",
             original_value="hydraulic humming cycle",
+            dpp_static_id="model-a",
             concept_id="pump_fault",
             proposed_surface_form="hydraulic humming cycle",
             reviewer="prototype_review",
@@ -218,11 +220,17 @@ class FeedbackProposalTests(unittest.TestCase):
             )
 
             mappings = load_learned_service_text_mappings(feedback_path)
+            scoped = load_model_scoped_service_text_mappings("model-a", feedback_path)
+            other_model = load_model_scoped_service_text_mappings("model-b", feedback_path)
 
         self.assertEqual(1, len(mappings))
         self.assertEqual("diagnosis", mappings[0].kind)
         self.assertEqual("pump_fault", mappings[0].concept_id)
         self.assertEqual("hydraulic humming cycle", mappings[0].surface_form)
+        self.assertEqual("model-a", mappings[0].dpp_static_id)
+
+        self.assertEqual(1, len(scoped))
+        self.assertEqual((), other_model)
 
     def test_learned_feedback_exact_match_is_reported_as_review_candidate_not_core_normalization(self) -> None:
         proposal = create_feedback_proposal(
@@ -231,6 +239,7 @@ class FeedbackProposalTests(unittest.TestCase):
             entity_type="RepairServiceStep",
             field_path="RepairServiceStep.diagnose",
             original_value="hydraulic humming cycle",
+            dpp_static_id="model-a",
             concept_id="pump_fault",
             proposed_surface_form="hydraulic humming cycle",
             reviewer="prototype_review",
@@ -246,7 +255,12 @@ class FeedbackProposalTests(unittest.TestCase):
             )
             os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = str(feedback_path)
             try:
-                result = normalize_text_value("diagnosis", "hydraulic humming cycle", enable_semantic=False)
+                result = normalize_text_value(
+                    "diagnosis",
+                    "hydraulic humming cycle",
+                    enable_semantic=False,
+                    learned_feedback_dpp_static_id="model-a",
+                )
             finally:
                 if old_path is None:
                     os.environ.pop("DPP_DQ_LEARNED_FEEDBACK_PATH", None)
@@ -259,6 +273,51 @@ class FeedbackProposalTests(unittest.TestCase):
         self.assertEqual("learned_feedback_exact", result.candidates[0].match_type)
         self.assertEqual("learned_feedback", result.candidates[0].source)
         self.assertEqual(approved.proposal_id, result.candidates[0].feedback_id)
+
+    def test_learned_feedback_is_not_used_without_matching_model_context(self) -> None:
+        proposal = create_feedback_proposal(
+            action="accept_mapping",
+            scope_name="service",
+            entity_type="RepairServiceStep",
+            field_path="RepairServiceStep.diagnose",
+            original_value="hydraulic humming cycle",
+            dpp_static_id="model-a",
+            concept_id="pump_fault",
+            proposed_surface_form="hydraulic humming cycle",
+            reviewer="prototype_review",
+        )
+        approved = approve_feedback_proposal(proposal, reviewer="prototype_review")
+
+        old_path = os.environ.get("DPP_DQ_LEARNED_FEEDBACK_PATH")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            feedback_path = Path(tmpdir) / "learned_feedback.json"
+            feedback_path.write_text(
+                json.dumps({"feedback": [approved.as_dict()]}),
+                encoding="utf-8",
+            )
+            os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = str(feedback_path)
+            try:
+                without_context = normalize_text_value(
+                    "diagnosis",
+                    "hydraulic humming cycle",
+                    enable_semantic=False,
+                )
+                other_model = normalize_text_value(
+                    "diagnosis",
+                    "hydraulic humming cycle",
+                    enable_semantic=False,
+                    learned_feedback_dpp_static_id="model-b",
+                )
+            finally:
+                if old_path is None:
+                    os.environ.pop("DPP_DQ_LEARNED_FEEDBACK_PATH", None)
+                else:
+                    os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = old_path
+
+        self.assertEqual("unresolved", without_context.status)
+        self.assertFalse(without_context.candidates)
+        self.assertEqual("unresolved", other_model.status)
+        self.assertFalse(other_model.candidates)
 
     def test_learned_feedback_semantic_match_is_review_only_and_separate_from_core_registry(self) -> None:
         class FakeEmbeddingModel:
@@ -279,6 +338,7 @@ class FeedbackProposalTests(unittest.TestCase):
             entity_type="RepairServiceStep",
             field_path="RepairServiceStep.diagnose",
             original_value="hydraulic humming cycle",
+            dpp_static_id="model-a",
             concept_id="pump_fault",
             proposed_surface_form="hydraulic humming cycle",
             reviewer="prototype_review",
@@ -300,6 +360,7 @@ class FeedbackProposalTests(unittest.TestCase):
                     "diagnosis",
                     "pump makes a hydraulic humming noise",
                     enable_semantic=True,
+                    learned_feedback_dpp_static_id="model-a",
                 )
             finally:
                 free_text_module._embedding_model = old_embedding_model
@@ -322,6 +383,7 @@ class FeedbackProposalTests(unittest.TestCase):
             entity_type="RepairServiceStep",
             field_path="RepairServiceStep.diagnose",
             original_value="hydraulic humming cycle",
+            dpp_static_id="model-a",
             concept_id="pump_fault",
             proposed_surface_form="hydraulic humming cycle",
             reviewer="prototype_review",
@@ -347,7 +409,11 @@ class FeedbackProposalTests(unittest.TestCase):
             )
             os.environ["DPP_DQ_LEARNED_FEEDBACK_PATH"] = str(feedback_path)
             try:
-                result = harmonize_document(document, "service")
+                result = harmonize_document(
+                    document,
+                    "service",
+                    learned_feedback_dpp_static_id="model-a",
+                )
             finally:
                 if old_path is None:
                     os.environ.pop("DPP_DQ_LEARNED_FEEDBACK_PATH", None)
@@ -369,6 +435,7 @@ class FeedbackProposalTests(unittest.TestCase):
             entity_type="RepairServiceStep",
             field_path="RepairServiceStep.diagnose",
             original_value="hydraulic humming cycle",
+            dpp_static_id="model-a",
             concept_id="pump_fault",
             proposed_surface_form="hydraulic humming cycle",
             reviewer="prototype_review",

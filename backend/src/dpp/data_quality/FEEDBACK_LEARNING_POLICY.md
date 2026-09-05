@@ -11,15 +11,12 @@ not verified user identity.
 
 ## Scope
 
-Feedback learning is currently limited to service-text harmonization and
-service-relation review prompts.
+Feedback learning is currently limited to service-text harmonization.
 
 The feedback layer may support:
 
 - unresolved or ambiguous service-text mappings
 - matches to `review_candidate` service concepts
-- service diagnosis/part relation warnings
-- service concept/service-type warnings
 - proposed surface forms for existing service concepts
 
 It must not directly overwrite:
@@ -58,7 +55,12 @@ Approved feedback may affect runtime behavior only through a separate learned
 feedback layer.
 
 Approved surface forms may be merged into service-text matching as local learned
-matching phrases. They should be reported with source `learned_feedback`.
+matching phrases. They are scoped to the exact `DPPStatic` of the selected DPP
+instance and should be reported with source `learned_feedback`.
+
+If a service-text run has no selected DPP instance and therefore no resolvable
+product-model context, model-scoped learned feedback must not affect its
+suggestions. Core-registry matching remains available independently.
 
 Approved relation hints may support future soft anomaly/review prompts. They
 must remain non-binding and should not be treated as hard compatibility rules.
@@ -70,7 +72,10 @@ Rejected feedback must not affect matching or anomaly checks.
 - Original input text must always be preserved.
 - A seeded mapping must remain distinguishable from a learned mapping.
 - Feedback must include provenance: action, status, review source, timestamp,
-  original value, and proposed concept.
+  original value, proposed concept, and product-model identifier.
+- Learned feedback must be retrieved only for the exact `DPPStatic` for which it
+  was approved. Older records without a product-model identifier remain
+  readable for audit or migration but must not affect runtime suggestions.
 - The prototype should not claim to verify a reviewer identity or role unless a
   future user/authorization layer is implemented.
 - A single approved feedback record must not silently promote a concept to the
@@ -94,6 +99,7 @@ Recommended fields:
 - `entity_type`
 - `field_path`
 - `original_value`
+- `dpp_static_id`
 - `concept_id`
 - `proposed_surface_form`
 - `proposed_service_type`
@@ -132,9 +138,8 @@ The feedback layer is not intended to:
 - create new canonical concepts without separate review
 - replace deterministic validation or normalization logic
 
-## Next Implementation Step
+## Future Production Extension
 
-Implement a small runtime loader for approved feedback records and merge approved
-service surface forms into service-text matching without changing seeded
-concepts. Add tests that show an approved learned surface form can improve
-matching and that its provenance remains visible.
+A production-oriented implementation should replace the local JSON artifact
+with governed multi-user persistence, authorization, concurrency control, and a
+review workflow for changing or withdrawing feedback records.

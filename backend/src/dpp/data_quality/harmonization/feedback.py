@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-
 FeedbackAction = Literal[
     "accept_mapping",
     "reject_mapping",
@@ -48,6 +47,7 @@ class HarmonizationFeedbackProposal:
     entity_type: str
     field_path: str
     original_value: Any
+    dpp_static_id: str | None = None
     concept_id: str | None = None
     proposed_surface_form: str | None = None
     proposed_service_type: str | None = None
@@ -75,6 +75,7 @@ class LearnedServiceTextMapping:
     original_value: str
     concept_id: str
     surface_form: str
+    dpp_static_id: str | None = None
     status: FeedbackStatus = "approved"
     source: str = "manual_review"
     created_at_utc: str | None = None
@@ -95,6 +96,7 @@ def create_feedback_proposal(
     entity_type: str,
     field_path: str,
     original_value: Any,
+    dpp_static_id: str | None = None,
     concept_id: str | None = None,
     proposed_surface_form: str | None = None,
     proposed_service_type: str | None = None,
@@ -110,6 +112,7 @@ def create_feedback_proposal(
         entity_type=entity_type,
         field_path=field_path,
         original_value=original_value,
+        dpp_static_id=dpp_static_id,
         concept_id=concept_id,
         proposed_surface_form=proposed_surface_form,
         proposed_service_type=proposed_service_type,
@@ -149,6 +152,7 @@ def learned_mapping_from_feedback(
         original_value=original_value,
         concept_id=proposal.concept_id,
         surface_form=surface_form,
+        dpp_static_id=proposal.dpp_static_id,
         source=proposal.source if proposal.source != "user_feedback" else "manual_review",
         created_at_utc=proposal.created_at_utc,
     )
@@ -219,6 +223,27 @@ def load_learned_service_text_mappings(
             mappings.append(mapping)
 
     return tuple(mappings)
+
+
+def load_model_scoped_service_text_mappings(
+    dpp_static_id: str,
+    path: str | Path | None = None,
+) -> tuple[LearnedServiceTextMapping, ...]:
+    """Load approved mappings belonging to one exact product model.
+
+    Records created before product-model scoping was introduced do not carry a
+    ``dpp_static_id`` and are deliberately excluded from runtime suggestions.
+    They remain readable through :func:`load_learned_service_text_mappings` for
+    audit and migration purposes.
+    """
+    model_id = str(dpp_static_id).strip()
+    if not model_id:
+        return ()
+    return tuple(
+        mapping
+        for mapping in load_learned_service_text_mappings(path)
+        if mapping.dpp_static_id == model_id
+    )
 
 
 def append_feedback_record(
@@ -304,6 +329,8 @@ def _find_equivalent_record(
             continue
         if record.get("original_value") != proposal.get("original_value"):
             continue
+        if record.get("dpp_static_id") != proposal.get("dpp_static_id"):
+            continue
         if record.get("concept_id") != proposal.get("concept_id"):
             continue
         if record.get("proposed_surface_form") != proposal.get("proposed_surface_form"):
@@ -333,6 +360,7 @@ def _proposal_from_record(record: dict[str, Any]) -> HarmonizationFeedbackPropos
             entity_type=str(record["entity_type"]),
             field_path=str(record["field_path"]),
             original_value=record["original_value"],
+            dpp_static_id=_optional_str(record.get("dpp_static_id")),
             concept_id=_optional_str(record.get("concept_id")),
             proposed_surface_form=_optional_str(record.get("proposed_surface_form")),
             proposed_service_type=_optional_str(record.get("proposed_service_type")),
@@ -368,6 +396,7 @@ def _learned_mapping_from_record(record: dict[str, Any]) -> LearnedServiceTextMa
         original_value=str(record.get("original_value") or surface_form),
         concept_id=concept_id,
         surface_form=surface_form,
+        dpp_static_id=_optional_str(record.get("dpp_static_id")),
         status="approved",
         source=str(record.get("source") or "manual_review"),
         created_at_utc=_optional_str(record.get("created_at_utc")),

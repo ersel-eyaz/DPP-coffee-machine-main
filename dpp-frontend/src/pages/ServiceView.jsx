@@ -387,6 +387,7 @@ export default function ServiceView() {
         scope: "service",
         mode: "both",
         document: buildPendingServiceQualityDocument(),
+        selected_instance_id: instanceId,
         enable_llm_review: false,
         review_context: {
           selectedPartId: selPartId,
@@ -415,6 +416,7 @@ export default function ServiceView() {
         scope: "service",
         mode: "both",
         document: buildPendingServiceQualityDocument(),
+        selected_instance_id: instanceId,
         enable_llm_review: true,
         review_context: {
           selectedPartId: selPartId,
@@ -520,6 +522,7 @@ export default function ServiceView() {
     try {
       await Promise.all(entriesToStore.map((entry) =>
         api.createDataQualityServiceTextFeedback({
+          selected_instance_id: instanceId,
           entity_type: entry.entity_type || stepType,
           field_path: entry.field_path || `${entry.entity_type || stepType}.${entry.field_name}`,
           original_value: entry.original_value,
@@ -855,7 +858,7 @@ export default function ServiceView() {
                     <div>
                       <div className="fw-semibold">Service vocabulary review</div>
                       <div className="text-muted small">
-                        Clusters approved learned feedback, unresolved service history from devices of the same exact model, and current unresolved input for controlled vocabulary review. It does not update the core registry.
+                        Clusters approved feedback and unresolved service history from devices of the same exact model, together with current unresolved input for controlled vocabulary review. It does not update the core registry.
                       </div>
                     </div>
                     <Button
@@ -1998,7 +2001,7 @@ function renderLearnedFeedbackAction(entry, index, { concepts, selectedConcept, 
       </div>
       <div className="quality-caution-note">
         <span className="quality-caution-mark">!</span>
-        <span>Use only when the mapping is reliable, because saved feedback can influence future suggestions.</span>
+        <span>Use only when the mapping is reliable, because saved feedback can influence future suggestions for this product model.</span>
       </div>
     </div>
   );

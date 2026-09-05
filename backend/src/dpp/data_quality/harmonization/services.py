@@ -698,7 +698,12 @@ def _resolve_field_mapping(
     ]
 
 
-def harmonize_document(document: dict[str, Any], scope_name: str) -> HarmonizationResult:
+def harmonize_document(
+    document: dict[str, Any],
+    scope_name: str,
+    *,
+    learned_feedback_dpp_static_id: str | None = None,
+) -> HarmonizationResult:
     """
     Harmonize a JSON-LD-like input document for a selected scope.
 
@@ -850,7 +855,11 @@ def harmonize_document(document: dict[str, Any], scope_name: str) -> Harmonizati
 
             if canonical_field.role == "free_text_harmonization":
                 text_kind = _free_text_kind_for_path(canonical_field.path)
-                text_results = normalize_text_values(text_kind, value_for_normalization)
+                text_results = normalize_text_values(
+                    text_kind,
+                    value_for_normalization,
+                    learned_feedback_dpp_static_id=learned_feedback_dpp_static_id,
+                )
                 as_list = isinstance(value_for_normalization, list)
                 normalized_value = clean_text_normalization_value(text_results, as_list=as_list)
                 value_confidence, value_method, text_status = _free_text_summary(text_results)

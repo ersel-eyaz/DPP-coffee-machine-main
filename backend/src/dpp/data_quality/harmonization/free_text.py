@@ -25,19 +25,15 @@ from functools import lru_cache
 from math import sqrt
 from typing import Any, Literal
 
-
 from dpp.data_quality.harmonization.feedback import (
     LearnedServiceTextMapping,
-    load_learned_service_text_mappings,
+    load_model_scoped_service_text_mappings,
 )
 from dpp.data_quality.harmonization.service_concepts import (
-    DIAGNOSIS_CONCEPTS,
-    SYMPTOM_CONCEPTS,
     TEXT_CONCEPTS_BY_KIND,
     TextConcept,
     TextConceptKind,
 )
-
 
 TextMatchStatus = Literal["normalized", "ambiguous", "unresolved", "error"]
 
@@ -199,9 +195,11 @@ def find_learned_text_value_candidates(
     kind: TextConceptKind,
     text: Any,
     min_confidence: float = AMBIGUOUS_TEXT_FUZZY_THRESHOLD,
+    *,
+    dpp_static_id: str | None = None,
 ) -> list[TextNormalizationCandidate]:
     """Find review-only candidates from approved learned feedback evidence."""
-    if not isinstance(text, str):
+    if not isinstance(text, str) or not dpp_static_id:
         return []
 
     key = _normalize_text_key(text)
@@ -211,7 +209,7 @@ def find_learned_text_value_candidates(
     candidates_by_feedback: dict[str, TextNormalizationCandidate] = {}
     concepts_by_id = {item.concept_id: item for item in TEXT_CONCEPTS_BY_KIND[kind]}
 
-    for mapping in load_learned_service_text_mappings():
+    for mapping in load_model_scoped_service_text_mappings(dpp_static_id):
         if mapping.kind != kind:
             continue
 
@@ -286,7 +284,7 @@ def _as_vector(embedding: Any) -> list[float]:
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
     """Return cosine similarity for two vectors."""
-    dot_product = sum(a * b for a, b in zip(left, right))
+    dot_product = sum(a * b for a, b in zip(left, right, strict=False))
     left_norm = sqrt(sum(a * a for a in left))
     right_norm = sqrt(sum(b * b for b in right))
     if left_norm == 0.0 or right_norm == 0.0:
@@ -311,7 +309,7 @@ def _semantic_concept_embeddings(kind: TextConceptKind) -> tuple[tuple[str, str,
     embeddings = model.encode(texts, normalize_embeddings=True)
 
     result: list[tuple[str, str, str, tuple[float, ...]]] = []
-    for concept, embedding in zip(concepts, embeddings):
+    for concept, embedding in zip(concepts, embeddings, strict=False):
         result.append((concept.concept_id, concept.label, concept.description, tuple(_as_vector(embedding))))
     return tuple(result)
 
@@ -355,16 +353,22 @@ def find_learned_text_semantic_candidates(
     kind: TextConceptKind,
     text: Any,
     min_confidence: float = AMBIGUOUS_TEXT_SEMANTIC_THRESHOLD,
+    *,
+    dpp_static_id: str | None = None,
 ) -> list[TextNormalizationCandidate]:
     """Find review-only semantic candidates from approved learned feedback evidence."""
-    if not isinstance(text, str):
+    if not isinstance(text, str) or not dpp_static_id:
         return []
 
     query = " ".join(text.strip().split())
     if not query:
         return []
 
-    mappings = [mapping for mapping in load_learned_service_text_mappings() if mapping.kind == kind]
+    mappings = [
+        mapping
+        for mapping in load_model_scoped_service_text_mappings(dpp_static_id)
+        if mapping.kind == kind
+    ]
     if not mappings:
         return []
 
@@ -375,7 +379,7 @@ def find_learned_text_semantic_candidates(
     mapping_embeddings = model.encode(mapping_texts, normalize_embeddings=True)
 
     candidates: list[TextNormalizationCandidate] = []
-    for mapping, embedding in zip(mappings, mapping_embeddings):
+    for mapping, embedding in zip(mappings, mapping_embeddings, strict=False):
         target_concept = concepts_by_id.get(mapping.concept_id)
         if target_concept is None:
             continue
@@ -439,6 +443,7 @@ def _closest_diagnostic_candidates(
     text: str,
     *,
     enable_semantic: bool,
+    dpp_static_id: str | None,
 ) -> tuple[TextNormalizationCandidate, ...]:
     """Return top below-threshold fuzzy/semantic candidates for traceability only."""
     closest: list[TextNormalizationCandidate] = []
@@ -446,12 +451,22 @@ def _closest_diagnostic_candidates(
     if fuzzy_candidates:
         closest.append(fuzzy_candidates[0])
 
-    learned_candidates = find_learned_text_value_candidates(kind, text, min_confidence=0.0)
+    learned_candidates = find_learned_text_value_candidates(
+        kind,
+        text,
+        min_confidence=0.0,
+        dpp_static_id=dpp_static_id,
+    )
     if learned_candidates:
         closest.append(learned_candidates[0])
     elif enable_semantic:
         try:
-            learned_semantic_candidates = find_learned_text_semantic_candidates(kind, text, min_confidence=0.0)
+            learned_semantic_candidates = find_learned_text_semantic_candidates(
+                kind,
+                text,
+                min_confidence=0.0,
+                dpp_static_id=dpp_static_id,
+            )
         except TextNormalizationError:
             learned_semantic_candidates = []
         if learned_semantic_candidates:
@@ -477,7 +492,13 @@ def _closest_diagnostic_candidates(
     return tuple(deduplicated)
 
 
-def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: bool = True) -> TextNormalizationResult:
+def normalize_text_value(
+    kind: TextConceptKind,
+    text: Any,
+    *,
+    enable_semantic: bool = True,
+    learned_feedback_dpp_static_id: str | None = None,
+) -> TextNormalizationResult:
     """Normalize one free-text value into a canonical concept result."""
     if not isinstance(text, str):
         return TextNormalizationResult(
@@ -513,10 +534,18 @@ def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: b
         )
 
     candidates = find_text_value_candidates(kind, stripped)
-    learned_candidates = find_learned_text_value_candidates(kind, stripped)
+    learned_candidates = find_learned_text_value_candidates(
+        kind,
+        stripped,
+        dpp_static_id=learned_feedback_dpp_static_id,
+    )
     if enable_semantic and not learned_candidates:
         try:
-            learned_semantic_candidates = find_learned_text_semantic_candidates(kind, stripped)
+            learned_semantic_candidates = find_learned_text_semantic_candidates(
+                kind,
+                stripped,
+                dpp_static_id=learned_feedback_dpp_static_id,
+            )
         except TextNormalizationError:
             learned_semantic_candidates = []
         if learned_semantic_candidates:
@@ -550,7 +579,12 @@ def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: b
         except TextNormalizationError:
             candidates = []
 
-    closest_candidates = _closest_diagnostic_candidates(kind, stripped, enable_semantic=enable_semantic)
+    closest_candidates = _closest_diagnostic_candidates(
+        kind,
+        stripped,
+        enable_semantic=enable_semantic,
+        dpp_static_id=learned_feedback_dpp_static_id,
+    )
 
     if candidates:
         return TextNormalizationResult(
@@ -575,12 +609,33 @@ def normalize_text_value(kind: TextConceptKind, text: Any, *, enable_semantic: b
     )
 
 
-def normalize_text_values(kind: TextConceptKind, value: Any, *, enable_semantic: bool = True) -> list[TextNormalizationResult]:
+def normalize_text_values(
+    kind: TextConceptKind,
+    value: Any,
+    *,
+    enable_semantic: bool = True,
+    learned_feedback_dpp_static_id: str | None = None,
+) -> list[TextNormalizationResult]:
     """Normalize a string or list of strings into concept results."""
     if isinstance(value, list):
-        return [normalize_text_value(kind, item, enable_semantic=enable_semantic) for item in value]
+        return [
+            normalize_text_value(
+                kind,
+                item,
+                enable_semantic=enable_semantic,
+                learned_feedback_dpp_static_id=learned_feedback_dpp_static_id,
+            )
+            for item in value
+        ]
 
-    return [normalize_text_value(kind, value, enable_semantic=enable_semantic)]
+    return [
+        normalize_text_value(
+            kind,
+            value,
+            enable_semantic=enable_semantic,
+            learned_feedback_dpp_static_id=learned_feedback_dpp_static_id,
+        )
+    ]
 
 
 def clean_text_normalization_value(results: list[TextNormalizationResult], *, as_list: bool) -> Any:

@@ -27,7 +27,7 @@ from dpp.data_quality.harmonization.feedback import (
     approve_feedback_proposal,
     create_feedback_proposal,
     learned_mapping_from_feedback,
-    load_learned_service_text_mappings,
+    load_model_scoped_service_text_mappings,
 )
 from dpp.data_quality.harmonization.outputs import build_clean_jsonld, build_harmonization_report
 from dpp.data_quality.harmonization.parser import ParseError, parse_jsonld_document
@@ -49,8 +49,18 @@ _METRIC_EXPLANATION_SCHEMA: Dict[str, Any] = {
     "required": ["summary", "points", "limitations"],
     "properties": {
         "summary": {"type": "string"},
-        "points": {"type": "array", "items": {"type": "string"}},
-        "limitations": {"type": "array", "items": {"type": "string"}},
+        "points": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "maxItems": 4,
+        },
+        "limitations": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "maxItems": 3,
+        },
     },
 }
 
@@ -59,6 +69,10 @@ class DataQualityRunRequest(BaseModel):
     scope: DataQualityScope
     mode: DataQualityMode = "both"
     document: Dict[str, Any] = Field(..., description="JSON-LD document to check without storing it in MongoDB.")
+    selected_instance_id: Optional[str] = Field(
+        None,
+        description="Optional DPP instance context used only for model-scoped learned service feedback.",
+    )
     enable_llm_review: bool = Field(
         False,
         description="Optionally add a transparent LLM-assisted service review layer after deterministic checks.",
@@ -103,6 +117,10 @@ class DataQualityAnomalyOptions(BaseModel):
 
 
 class ServiceTextFeedbackRequest(BaseModel):
+    selected_instance_id: str = Field(
+        ...,
+        description="Selected DPP instance whose exact DPPStatic scopes the learned feedback.",
+    )
     entity_type: str = Field(..., description="Service-step entity type, e.g. RepairServiceStep.")
     field_path: str = Field(..., description="Canonical service-text field path, e.g. RepairServiceStep.diagnose.")
     original_value: str = Field(..., description="Original service text to store as local learned evidence.")
@@ -256,10 +274,10 @@ def _historical_service_text_records(instances: List[DPPInstance]) -> list[Histo
     return records
 
 
-async def _same_model_instances(selected_instance_id: str) -> List[DPPInstance]:
+async def _dpp_static_id_for_instance(selected_instance_id: str) -> str:
     selected = await DPPInstance.get(
         selected_instance_id,
-        fetch_links=["dppStaticLink", "partInstanceLink"],
+        fetch_links=["dppStaticLink"],
     )
     if selected is None:
         raise HTTPException(status_code=404, detail=f"DPPInstance {selected_instance_id} not found")
@@ -268,10 +286,17 @@ async def _same_model_instances(selected_instance_id: str) -> List[DPPInstance]:
     if dpp_static_id is None:
         raise HTTPException(status_code=422, detail="Selected DPPInstance has no resolvable dppStaticLink")
 
-    return await DPPInstance.find(
+    return str(dpp_static_id)
+
+
+async def _same_model_instances(selected_instance_id: str) -> tuple[str, List[DPPInstance]]:
+    dpp_static_id = await _dpp_static_id_for_instance(selected_instance_id)
+
+    instances = await DPPInstance.find(
         DPPInstance.dppStaticLink.id == dpp_static_id,
         fetch_links=["partInstanceLink"],
     ).to_list()
+    return dpp_static_id, instances
 
 EXAMPLE_DOCUMENTS: Dict[str, Dict[str, str]] = {
     "product_dirty": {
@@ -511,12 +536,15 @@ async def create_service_text_feedback(request: ServiceTextFeedbackRequest) -> D
             ),
         )
 
+    dpp_static_id = await _dpp_static_id_for_instance(request.selected_instance_id)
+
     proposal = create_feedback_proposal(
         action="accept_mapping",
         scope_name="service",
         entity_type=request.entity_type,
         field_path=request.field_path,
         original_value=original_value,
+        dpp_static_id=dpp_static_id,
         concept_id=concept.concept_id,
         proposed_surface_form=(request.proposed_surface_form or original_value).strip(),
         reviewer="prototype_review",
@@ -538,12 +566,15 @@ async def create_service_text_feedback(request: ServiceTextFeedbackRequest) -> D
 @router.post("/service-concept-candidates")
 async def build_service_concept_candidate_report(request: ServiceConceptCandidateReportRequest) -> Dict[str, Any]:
     """Build a review-only service concept candidate evidence report."""
-    learned_mappings = load_learned_service_text_mappings()
-    learned_observations = observations_from_learned_feedback(learned_mappings)
+    learned_mappings = ()
+    learned_observations = ()
     historical_selection = None
+    dpp_static_id = None
     same_model_instance_count = 0
     if request.selected_instance_id:
-        same_model_instances = await _same_model_instances(request.selected_instance_id)
+        dpp_static_id, same_model_instances = await _same_model_instances(request.selected_instance_id)
+        learned_mappings = load_model_scoped_service_text_mappings(dpp_static_id)
+        learned_observations = observations_from_learned_feedback(learned_mappings)
         same_model_instance_count = len(same_model_instances)
         historical_selection = select_unresolved_historical_observations(
             _historical_service_text_records(same_model_instances),
@@ -576,6 +607,7 @@ async def build_service_concept_candidate_report(request: ServiceConceptCandidat
     )
     payload = report.as_dict()
     payload["sources"] = {
+        "dpp_static_id": dpp_static_id,
         "learned_feedback_observations": len(learned_observations),
         "same_model_instances": same_model_instance_count,
         "historical_original_observations": historical_selection.inspected_count if historical_selection else 0,
@@ -606,12 +638,6 @@ async def explain_service_candidate_metrics(request: CandidateMetricInterpretati
         "clustering_quality": request.clustering_quality,
         "sources": request.sources,
         "parameters": request.parameters,
-        "constraints": [
-            "Do not make service concept, vocabulary promotion, or alias decisions.",
-            "Do not infer domain-specific machine facts.",
-            "Explain whether the clustering diagnostics are interpretable and what their limitations are.",
-            "Treat the metrics as internal diagnostics, not validated model performance.",
-        ],
     }
     model = os.getenv("DPP_DQ_LLM_MODEL", DEFAULT_METRIC_EXPLANATION_MODEL).strip() or DEFAULT_METRIC_EXPLANATION_MODEL
     timeout = _env_float("DPP_DQ_LLM_TIMEOUT_SECONDS", METRIC_EXPLANATION_TIMEOUT_SECONDS)
@@ -621,10 +647,11 @@ async def explain_service_candidate_metrics(request: CandidateMetricInterpretati
             {
                 "role": "system",
                 "content": (
-                    "You explain clustering diagnostics for a data-quality review UI. "
-                    "You receive only aggregate metrics, not raw service text and not concept definitions. "
-                    "Give a short cautious interpretation. Do not validate performance, do not recommend "
-                    "concept promotion, and do not discuss domain-specific service concepts."
+                    "Interpret the supplied aggregate clustering diagnostics briefly and cautiously for a "
+                    "data-quality review UI. Treat them as internal triage signals, not validated performance. "
+                    "Because no raw service texts or concept definitions are supplied, do not infer "
+                    "domain-specific facts or make concept, alias, or promotion decisions. Return no more "
+                    "than four concise interpretation points and three concise limitations."
                 ),
             },
             {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
@@ -693,9 +720,16 @@ async def run_data_quality(request: DataQualityRunRequest) -> Dict[str, Any]:
     instances and does not write to MongoDB.
     """
     scope_name = _detect_scope(request.document) if request.scope == "auto" else request.scope
+    learned_feedback_dpp_static_id = None
+    if scope_name == "service" and request.selected_instance_id:
+        learned_feedback_dpp_static_id = await _dpp_static_id_for_instance(request.selected_instance_id)
 
     try:
-        result = harmonize_document(request.document, scope_name)
+        result = harmonize_document(
+            request.document,
+            scope_name,
+            learned_feedback_dpp_static_id=learned_feedback_dpp_static_id,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Harmonization failed: {exc}") from exc
 
