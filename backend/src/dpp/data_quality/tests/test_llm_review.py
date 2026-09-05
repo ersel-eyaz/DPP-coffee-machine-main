@@ -156,6 +156,7 @@ class ServiceLlmReviewTests(unittest.TestCase):
         self.assertEqual("learned_feedback_semantic", learned_candidates[0]["match_type"])
         self.assertEqual("feedback-001", learned_candidates[0]["feedback_id"])
         self.assertEqual("candidate", learned_candidates[0]["decision_role"])
+        self.assertEqual("confirm_candidate_mapping", text_entry["mapping_action"])
 
     def test_review_context_omits_trace_only_learned_feedback_below_candidate_threshold(self) -> None:
         result = HarmonizationResult(
@@ -196,6 +197,32 @@ class ServiceLlmReviewTests(unittest.TestCase):
         self.assertEqual([], text_entry["candidate_concepts"])
         self.assertEqual([], text_entry["evidence_sources"])
         self.assertEqual(1, text_entry["trace_only_candidates_omitted"])
+        self.assertEqual("clarify_text_or_review_vocabulary", text_entry["mapping_action"])
+
+    def test_review_context_marks_normalized_text_as_requiring_no_mapping_action(self) -> None:
+        result = HarmonizationResult(
+            scope_name="service",
+            entities={
+                "pending-service-step": HarmonizedEntity(
+                    entity_id="pending-service-step",
+                    entity_type="RepairServiceStep",
+                    text_harmonization={
+                        "diagnose": {
+                            "original_value": "air in water pump",
+                            "status": "normalized",
+                            "normalized_value": "air_in_pump_or_pipe",
+                            "confidence": 1.0,
+                            "method": "alias",
+                        }
+                    },
+                )
+            },
+        )
+
+        context = _build_review_context(result, deterministic_findings=[], review_context={})
+
+        text_entry = context["service_steps"][0]["text_entries"][0]
+        self.assertEqual("none", text_entry["mapping_action"])
 
 
 if __name__ == "__main__":

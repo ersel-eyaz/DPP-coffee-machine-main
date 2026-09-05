@@ -25,7 +25,7 @@ from dpp.data_quality.harmonization.schemas import HarmonizationResult, Harmoniz
 from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID
 
 DEFAULT_LLM_REVIEW_MODEL = "gpt-5.4-mini"
-LLM_REVIEW_PROMPT_VERSION = "service_llm_review_v5"
+LLM_REVIEW_PROMPT_VERSION = "service_llm_review_v9"
 LLM_REVIEW_TIMEOUT_SECONDS = 30.0
 
 _SERVICE_PART_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
@@ -182,6 +182,15 @@ def _candidate_decision_role(candidate: dict[str, Any]) -> str:
     return "candidate" if score >= _candidate_threshold(candidate) else "trace_only"
 
 
+def _mapping_action(entry: dict[str, Any], candidates: list[dict[str, Any]]) -> str:
+    """Return the deterministic review workflow for one service-text entry."""
+    if entry.get("status") == "normalized" and entry.get("normalized_value"):
+        return "none"
+    if candidates:
+        return "confirm_candidate_mapping"
+    return "clarify_text_or_review_vocabulary"
+
+
 def _collect_text_context(entity: HarmonizedEntity) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     text_entries: list[dict[str, Any]] = []
     concepts: dict[str, dict[str, Any]] = {}
@@ -220,6 +229,7 @@ def _collect_text_context(entity: HarmonizedEntity) -> tuple[list[dict[str, Any]
                     "normalized_concept": normalized,
                     "confidence": entry.get("confidence"),
                     "method": entry.get("method"),
+                    "mapping_action": _mapping_action(entry, llm_candidate_entries),
                     "candidate_concepts": llm_candidate_entries,
                     "learned_feedback_candidates": learned_feedback_candidates,
                     "evidence_sources": sorted(
@@ -465,57 +475,32 @@ async def build_service_llm_review_findings(
                 "role": "system",
                 "content": (
                     "You are a conservative data-quality reviewer with practical domain knowledge of household "
-                    "fully automatic coffee machines, also known as bean-to-cup coffee machines, and their "
-                    "service records. "
-                    "Use only the provided local context, canonical concepts, and deterministic findings. "
-                    "Use your domain knowledge only for cautious plausibility review; do not invent "
-                    "machine-specific facts beyond the provided service type, selected part, symptoms, "
-                    "diagnosis, concepts, and findings. Do not normalize values. "
-                    "Distinguish evidence sources carefully: core_registry is stable vocabulary evidence, "
-                    "learned_feedback is weaker local review evidence, and candidate_concept is not a controlled concept. "
-                    "Do not present learned_feedback or candidate_concept evidence as core vocabulary truth. "
-                    "If a text entry contains learned_feedback_candidates, explicitly consider them as local "
-                    "review evidence for the proposed concept, but still keep the review cautious. "
-                    "Clearly distinguish the existing target concept from the original surface form: the concept may exist "
-                    "in retrieved_concepts even when the original phrase is not one of its validated core-registry formulations. "
-                    "In that case, state that approved learned feedback suggests the existing concept and that the mapping "
-                    "remains review-only and requires user confirmation. Never say that the target concept itself is missing "
-                    "or not covered when it appears in retrieved_concepts. "
-                    "Learned feedback alone is not a part-diagnosis or other consistency concern. If the selected part and "
-                    "the proposed concept are compatible and no provided evidence indicates a conflict, request confirmation "
-                    "only for the text-to-concept mapping. Mention an uncertain relation only when the provided part, service "
-                    "text, concepts, or deterministic findings indicate conflicting components, subsystems, or meanings. "
-                    "A learned_feedback candidate may support plausibility; it must not be treated as an automatic correction. "
-                    "Only candidate_concepts and learned_feedback_candidates in the context passed the reporting threshold; "
-                    "do not refer to learned feedback unless it appears in learned_feedback_candidates. "
-                    "When learned_feedback_candidates are relevant, explicitly mention learned feedback in natural language "
-                    "and name the proposed concept, for example pump_fault, without using mechanical wording such as "
-                    "'candidate concept id'. "
-                    "Return exactly one review object for each service step, not one object per text entry. "
-                    "Evaluate the selected service type, selected part, and service text together. "
-                    "Pay special attention when the diagnosis text names a different subsystem or component "
-                    "than the selected part label, even if one symptom still fits the selected part. "
-                    "If such a different subsystem is detected, explicitly state that the selected part, "
-                    "diagnosis, and symptom combination should be reviewed for consistency. "
-                    "Only when raising an actual consistency concern, name the relation that is uncertain: "
-                    "part-diagnosis, symptom-diagnosis, part-symptom, service-type-diagnosis, or service-type-part. "
-                    "Use verdict ok when no additional attention is needed. Use review for an ambiguous text-to-concept mapping "
-                    "or when a relation deserves human attention; use likely_inconsistent only for a supported consistency concern. "
-                    "When service text is unresolved, distinguish likely missing service-concept coverage from "
-                    "possible consistency problems. Only when no relevant learned_feedback candidate exists, if the original "
-                    "text appears lexically related to the selected part or service type but is not covered by the canonical "
-                    "concepts, say that it looks plausible but is not covered by the current service concepts, rather than "
-                    "calling it a clear inconsistency. "
-                    "For a compatible learned-feedback case without conflicting evidence, end the message by asking the user "
-                    "to confirm the text-to-concept mapping. In that case, do not mention, question, or ask the user to confirm "
-                    "part-diagnosis, part-symptom, symptom-diagnosis, service-type-diagnosis, or service-type-part consistency. "
-                    "Conversely, when the relevant service texts are safely normalized to core-registry concepts and the concern "
-                    "is a conflict between the selected part and the subsystem or meaning of those concepts, do not request "
-                    "confirmation of the text-to-concept mapping. Ask the user to review the specific part-diagnosis or "
-                    "part-symptom relation instead. "
-                    "Messages must mention the selected service type, selected part label, and one relevant "
-                    "original service text. Do not use vague phrases such as 'check with the selected service type' "
-                    "or 'needs human check'. Keep messages short, cautious, and actionable."
+                    "fully automatic coffee machines. Review the provided service records, but do not normalize or correct "
+                    "their values. "
+                    "Base record-specific claims on the provided service type, selected part, symptoms, diagnosis, concepts, "
+                    "and deterministic findings. Use general domain knowledge only for cautious plausibility review and do "
+                    "not invent machine-specific facts. "
+                    "Respect evidence provenance: core_registry is stable vocabulary evidence, learned_feedback is "
+                    "reviewer-approved local evidence, and candidate_concept is an unpromoted review candidate. Do not "
+                    "present the latter two as core-registry truth. "
+                    "Follow the mapping_action supplied for each text entry: none means do not request mapping confirmation; "
+                    "confirm_candidate_mapping means ask the user to confirm or select an existing candidate; "
+                    "clarify_text_or_review_vocabulary means request clarification or vocabulary review and do not invent a "
+                    "target concept. The mapping action controls only the mapping recommendation; continue to review the "
+                    "consistency of the selected part, service type, diagnosis, and symptoms. "
+                    "When learned feedback is relevant, state that it suggests an existing concept but remains review-only "
+                    "and requires confirmation. Learned feedback alone is not a consistency problem. "
+                    "Return exactly one review object per service step. Raise a contextual concern only when the evidence "
+                    "indicates conflicting components, subsystems, or meanings. Name the affected relation as part-diagnosis, "
+                    "part-symptom, symptom-diagnosis, service-type-diagnosis, or service-type-part. Different wording or "
+                    "broader and narrower labels within the same subsystem do not establish a conflict. "
+                    "Keep deterministic findings about identity, references, target types, or cardinality in structural terms "
+                    "rather than reclassifying them as semantic relation concerns. "
+                    "Use ok when no attention is required, review when a mapping or contextual relation requires human "
+                    "attention, and likely_inconsistent only for a supported consistency concern. Treat plausible uncovered "
+                    "text as a vocabulary coverage gap, not automatically as an inconsistency. "
+                    "Keep the message short, cautious, and actionable. Mention the service type, selected part, and one "
+                    "relevant original text when available."
                 ),
             },
             {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
