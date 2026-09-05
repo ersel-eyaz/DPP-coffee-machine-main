@@ -214,8 +214,44 @@ class Chapter7BaselineTests(unittest.TestCase):
         self.assertEqual("fuzzy", activity_type["value_method"])
         self.assertAlmostEqual(0.9696969696969697, activity_type["value_confidence"])
 
-    def test_service_harmonization_scenario_preserves_unresolved_text_for_review(self) -> None:
-        clean, report, anomaly = self._process("service_harmonization.json", "service")
+    def test_service_harmonization_scenario_preserves_ambiguous_text_for_review(self) -> None:
+        ambiguous_candidates = [
+            TextNormalizationCandidate(
+                original_text="machine behaves strangely",
+                concept_id="does_not_turn_on",
+                label="Does not turn on",
+                confidence=0.4307861312749371,
+                match_type="semantic",
+            ),
+            TextNormalizationCandidate(
+                original_text="machine behaves strangely",
+                concept_id="power_on_but_no_operation",
+                label="Power on but no operation",
+                confidence=0.4243234548940268,
+                match_type="semantic",
+            ),
+        ]
+
+        def find_frozen_semantic_candidates(
+            kind: str,
+            text: object,
+            min_confidence: float = 0.42,
+        ) -> list[TextNormalizationCandidate]:
+            if kind != "symptom" or text != "machine behaves strangely":
+                return []
+            return [
+                candidate
+                for candidate in ambiguous_candidates
+                if candidate.confidence >= min_confidence
+            ]
+
+        # The real model result was verified when the fixture was frozen. The
+        # stub keeps the expected ambiguity independent of model availability.
+        with patch(
+            "dpp.data_quality.harmonization.free_text.find_text_semantic_candidates",
+            side_effect=find_frozen_semantic_candidates,
+        ):
+            clean, report, anomaly = self._process("service_harmonization.json", "service")
         service_node = next(entity for entity in clean["@graph"] if entity["@id"] == "ch7-service-replace-001")
         service_report = report["entities"]["ch7-service-replace-001"]
 
@@ -225,11 +261,15 @@ class Chapter7BaselineTests(unittest.TestCase):
             service_node["dpp:observedSymptoms"],
         )
         self.assertEqual(
-            {"normalized": 2, "unresolved": 1},
+            {"normalized": 2, "ambiguous": 1},
             report["summary"]["text_harmonization_status_counts"],
         )
-        unresolved = service_report["text_harmonization"]["observedSymptoms"][1]
-        self.assertEqual("unresolved", unresolved["status"])
+        ambiguous = service_report["text_harmonization"]["observedSymptoms"][1]
+        self.assertEqual("ambiguous", ambiguous["status"])
+        self.assertEqual(
+            ["does_not_turn_on", "power_on_but_no_operation"],
+            [candidate["concept_id"] for candidate in ambiguous["candidates"]],
+        )
         self.assertEqual(["service_text_requires_review"], [item["check_id"] for item in anomaly["findings"]])
 
     def test_service_similarity_scenario_uses_semantic_and_fuzzy_text_matching(self) -> None:

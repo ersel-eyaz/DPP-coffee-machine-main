@@ -19,7 +19,7 @@ stated purpose.
 | E2 | Emission | `emission_similarity.json` | Character-sequence and semantic matching of controlled values | harmonize | `power consumptin` is resolved by fuzzy matching and the Scope paraphrase by semantic matching; the clean output reconstructs E0 | verified |
 | E3 | Emission | `emission_anomaly.json` | Calculation, unit, scope/category, and statistical findings | both | Five frozen findings: four rule-based and one IQR | verified |
 | S0 | Service | `service_baseline.json` | Export-conform baseline and round-trip stability | both | Stable clean output; no unmapped field, issue, or anomaly finding | verified |
-| S1 | Service | `service_harmonization.json` | Field-label and service-text harmonization, including review behaviour | both | Two normalized texts, one unresolved text retained, and one review finding | verified |
+| S1 | Service | `service_harmonization.json` | Field-label and service-text harmonization, including review behaviour | both | Two normalized texts, one ambiguous text retained with candidates, and one review finding | verified |
 | S2 | Service | `service_similarity.json` | Semantic and character-sequence matching of service texts | harmonize | The diagnosis is resolved semantically and the symptom by fuzzy matching; the clean output reconstructs S0 | verified |
 | S3 | Service | `service_structure.json` | Required embedded object, relation target type, replacement identity, and static-part consistency | both | Four frozen structural findings; the two consistency errors support integrated save blocking | verified |
 
@@ -42,7 +42,7 @@ round-trip expectation before using its result in the thesis.
   `zero_reported_emissions_with_positive_inputs`,
   `emission_record_calculation_mismatch`, `scope3_category_missing`, and
   `statistical_iqr_outlier`.
-- S1 in `both` mode: `service_text_requires_review` for the unresolved symptom.
+- S1 in `both` mode: `service_text_requires_review` for the ambiguous symptom.
 - S3: `missing_required_embedded_object`,
   `relation_target_type_mismatch`,
   `replacement_part_static_mismatch`, and

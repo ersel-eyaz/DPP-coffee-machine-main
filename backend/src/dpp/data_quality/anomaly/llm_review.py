@@ -25,7 +25,7 @@ from dpp.data_quality.harmonization.schemas import HarmonizationResult, Harmoniz
 from dpp.data_quality.harmonization.service_concepts import TEXT_CONCEPTS_BY_ID
 
 DEFAULT_LLM_REVIEW_MODEL = "gpt-5.4-mini"
-LLM_REVIEW_PROMPT_VERSION = "service_llm_review_v1"
+LLM_REVIEW_PROMPT_VERSION = "service_llm_review_v2"
 LLM_REVIEW_TIMEOUT_SECONDS = 30.0
 
 _SERVICE_PART_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
@@ -476,6 +476,11 @@ async def build_service_llm_review_findings(
                     "Do not present learned_feedback or candidate_concept evidence as core vocabulary truth. "
                     "If a text entry contains learned_feedback_candidates, explicitly consider them as local "
                     "review evidence for the proposed concept, but still keep the review cautious. "
+                    "Clearly distinguish the existing target concept from the original surface form: the concept may exist "
+                    "in retrieved_concepts even when the original phrase is not one of its validated core-registry formulations. "
+                    "In that case, state that approved learned feedback suggests the existing concept and that the mapping "
+                    "remains review-only and requires user confirmation. Never say that the target concept itself is missing "
+                    "or not covered when it appears in retrieved_concepts. "
                     "A learned_feedback candidate may support plausibility; it must not be treated as an automatic correction. "
                     "Only candidate_concepts and learned_feedback_candidates in the context passed the reporting threshold; "
                     "do not refer to learned feedback unless it appears in learned_feedback_candidates. "
@@ -493,9 +498,10 @@ async def build_service_llm_review_findings(
                     "Use verdict ok when no additional attention is needed. Use review or likely_inconsistent only when the service type, "
                     "selected part, and service text relation deserves human attention. "
                     "When service text is unresolved, distinguish likely missing service-concept coverage from "
-                    "possible consistency problems. If the original text appears lexically related to the "
-                    "selected part or service type but is not covered by the canonical concepts, say that "
-                    "it looks plausible but is not covered by the current service concepts, rather than calling it a clear inconsistency. "
+                    "possible consistency problems. Only when no relevant learned_feedback candidate exists, if the original "
+                    "text appears lexically related to the selected part or service type but is not covered by the canonical "
+                    "concepts, say that it looks plausible but is not covered by the current service concepts, rather than "
+                    "calling it a clear inconsistency. "
                     "Messages must mention the selected service type, selected part label, and one relevant "
                     "original service text. Do not use vague phrases such as 'check with the selected service type' "
                     "or 'needs human check'. Keep messages short, cautious, and actionable."
