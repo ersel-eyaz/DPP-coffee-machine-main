@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Container,
   Form,
   ListGroup,
@@ -55,6 +56,7 @@ export default function ServiceView() {
   const [candidateReport, setCandidateReport] = useState(null);
   const [candidateReportLoading, setCandidateReportLoading] = useState(false);
   const [candidateReportErr, setCandidateReportErr] = useState(null);
+  const [showAdditionalQualityTools, setShowAdditionalQualityTools] = useState(false);
   const [metricExplanation, setMetricExplanation] = useState(null);
   const [metricExplanationLoading, setMetricExplanationLoading] = useState(false);
   const [metricExplanationErr, setMetricExplanationErr] = useState(null);
@@ -741,6 +743,26 @@ export default function ServiceView() {
     }
   };
 
+  const toggleAdditionalQualityTools = () => {
+    if (!showAdditionalQualityTools) {
+      setShowAdditionalQualityTools(true);
+      return;
+    }
+
+    if (candidateReport) {
+      const shouldClose = window.confirm(
+        "Closing this panel clears the generated candidate report and its metric explanation from the current view. They can be generated again. Continue?",
+      );
+      if (!shouldClose) return;
+    }
+
+    setShowAdditionalQualityTools(false);
+    setCandidateReport(null);
+    setCandidateReportErr(null);
+    setMetricExplanation(null);
+    setMetricExplanationErr(null);
+  };
+
   return (
     <Container className="py-3">
       <style>{`
@@ -813,43 +835,66 @@ export default function ServiceView() {
       </Row>
       <Row className="mb-3">
         <Col>
-          <Card className="candidate-report-card">
-            <Card.Header className="h6 d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
-              <span>Service vocabulary review</span>
-              <Button
-                size="sm"
-                variant="outline-primary"
-                onClick={runCandidateReport}
-                disabled={candidateReportLoading}
-              >
-                {candidateReportLoading ? (
-                  <>
-                    <Spinner animation="border" size="sm" className="me-1" />
-                    Building report…
-                  </>
-                ) : (
-                  "Build candidate report"
-                )}
-              </Button>
-            </Card.Header>
-            <Card.Body>
-              {!candidateReport && !candidateReportErr && (
-                <div className="text-muted small">
-                  Clusters approved learned feedback, unresolved service history from devices of the same exact model, and current unresolved input for controlled vocabulary review. It does not update the core registry.
-                </div>
-              )}
-              {candidateReportErr && <Alert variant="danger" className="py-2 mb-0">{candidateReportErr}</Alert>}
-              {candidateReport && (
-                <CandidateConceptReportSummary
-                  report={candidateReport}
-                  metricExplanation={metricExplanation}
-                  metricExplanationErr={metricExplanationErr}
-                  metricExplanationLoading={metricExplanationLoading}
-                  onExplainMetrics={runMetricExplanation}
-                />
-              )}
-            </Card.Body>
-          </Card>
+          <div className="d-flex justify-content-end">
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              onClick={toggleAdditionalQualityTools}
+              disabled={candidateReportLoading || metricExplanationLoading}
+              aria-controls="additional-quality-tools"
+              aria-expanded={showAdditionalQualityTools}
+            >
+              Additional quality tools {showAdditionalQualityTools ? "▴" : "▾"}
+            </Button>
+          </div>
+          <Collapse in={showAdditionalQualityTools}>
+            <div id="additional-quality-tools">
+              <Card className="candidate-report-card mt-2">
+                <Card.Body>
+                  <div className="d-flex flex-column flex-md-row align-items-md-start justify-content-between gap-2">
+                    <div>
+                      <div className="fw-semibold">Service vocabulary review</div>
+                      <div className="text-muted small">
+                        Clusters approved learned feedback, unresolved service history from devices of the same exact model, and current unresolved input for controlled vocabulary review. It does not update the core registry.
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline-primary"
+                      className="flex-shrink-0"
+                      onClick={runCandidateReport}
+                      disabled={candidateReportLoading}
+                    >
+                      {candidateReportLoading ? (
+                        <>
+                          <Spinner animation="border" size="sm" className="me-1" />
+                          Building report…
+                        </>
+                      ) : (
+                        "Build candidate report"
+                      )}
+                    </Button>
+                  </div>
+                  {candidateReportErr && (
+                    <Alert variant="danger" className="py-2 mt-3 mb-0">
+                      {candidateReportErr}
+                    </Alert>
+                  )}
+                  {candidateReport && (
+                    <div className="mt-3">
+                      <CandidateConceptReportSummary
+                        report={candidateReport}
+                        metricExplanation={metricExplanation}
+                        metricExplanationErr={metricExplanationErr}
+                        metricExplanationLoading={metricExplanationLoading}
+                        onExplainMetrics={runMetricExplanation}
+                      />
+                    </div>
+                  )}
+                </Card.Body>
+              </Card>
+            </div>
+          </Collapse>
         </Col>
       </Row>
       <Row className="gy-3">
