@@ -590,6 +590,62 @@ function TextConceptTable({ report }) {
   );
 }
 
+function hasVisibleReportValue(value) {
+  if (Array.isArray(value)) return value.some((item) => hasVisibleReportValue(item));
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some((item) => hasVisibleReportValue(item));
+  }
+  return true;
+}
+
+function visibleReportValueCount(value) {
+  if (Array.isArray(value)) return value.filter((item) => hasVisibleReportValue(item)).length;
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).filter((item) => hasVisibleReportValue(item)).length;
+  }
+  return 0;
+}
+
+function StructuredReportValue({ value }) {
+  if (value === null) return <span className="text-muted">null</span>;
+
+  if (Array.isArray(value)) {
+    const visibleItems = value.filter((item) => hasVisibleReportValue(item));
+    if (!visibleItems.length) return null;
+    return (
+      <div className="d-flex flex-column gap-2">
+        {visibleItems.map((item, index) => (
+          <div key={index} className="border-start ps-2">
+            <div className="small text-muted">Item {index + 1}</div>
+            <StructuredReportValue value={item} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value).filter(([, item]) => hasVisibleReportValue(item));
+    if (!entries.length) return null;
+    return (
+      <dl className="row g-1 mb-0 mt-1">
+        {entries.map(([key, item]) => (
+          <React.Fragment key={key}>
+            <dt className="col-5 text-break fw-normal">
+              <code>{key}</code>
+            </dt>
+            <dd className="col-7 mb-1 text-break">
+              <StructuredReportValue value={item} />
+            </dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    );
+  }
+
+  return <code className="text-break">{String(value)}</code>;
+}
+
 function AnomalyTable({ report }) {
   const findings = report?.findings || [];
   if (!findings.length) {
@@ -598,13 +654,16 @@ function AnomalyTable({ report }) {
 
   function observedValue(value) {
     if (typeof value === "undefined") return "-";
-    if (value === null || typeof value !== "object") return prettyJson(value);
+    if (value === null || typeof value !== "object") return <StructuredReportValue value={value} />;
+    if (!hasVisibleReportValue(value)) return "-";
 
-    const detailCount = Array.isArray(value) ? value.length : Object.keys(value).length;
+    const detailCount = visibleReportValueCount(value);
     return (
       <details className="dq-observed-details">
         <summary>Show details ({detailCount})</summary>
-        <pre>{prettyJson(value)}</pre>
+        <div className="mt-2">
+          <StructuredReportValue value={value} />
+        </div>
       </details>
     );
   }
@@ -649,6 +708,34 @@ function AnomalyTable({ report }) {
         </Table>
       </div>
     </Card>
+  );
+}
+
+function FindingValue({ label, value, summaryLabel = "Show details" }) {
+  if (typeof value === "undefined") return null;
+
+  const isStructured = value !== null && typeof value === "object";
+  if (isStructured && !hasVisibleReportValue(value)) return null;
+  if (!isStructured) {
+    return (
+      <div className="small mt-2">
+        <span className="text-muted">{label}:</span>{" "}
+        <StructuredReportValue value={value} />
+      </div>
+    );
+  }
+
+  const detailCount = visibleReportValueCount(value);
+  return (
+    <div className="small mt-2">
+      <div className="text-muted">{label}</div>
+      <details className="dq-observed-details">
+        <summary>{summaryLabel} ({detailCount})</summary>
+        <div className="mt-2">
+          <StructuredReportValue value={value} />
+        </div>
+      </details>
+    </div>
   );
 }
 
@@ -1001,6 +1088,29 @@ function SummaryModal({ type, result, onHide }) {
                       <div className="small text-muted">
                         {finding.entity_type || "-"} · {finding.entity_id || "-"}
                       </div>
+                      {finding.field_path && (
+                        <div className="small mt-2">
+                          <span className="text-muted">Field:</span>{" "}
+                          <code className="text-break">{finding.field_path}</code>
+                        </div>
+                      )}
+                      {finding.relation_path && (
+                        <div className="small mt-2">
+                          <span className="text-muted">Relation:</span>{" "}
+                          <code className="text-break">{finding.relation_path}</code>
+                        </div>
+                      )}
+                      <FindingValue label="Observed" value={finding.observed_value} />
+                      {finding.expected !== null && (
+                        <FindingValue label="Expected" value={finding.expected} />
+                      )}
+                      {finding.evidence && Object.keys(finding.evidence).length > 0 && (
+                        <FindingValue
+                          label="Technical evidence"
+                          value={finding.evidence}
+                          summaryLabel="Show technical evidence"
+                        />
+                      )}
                       {finding.review_action && <div className="small mt-1">Review: {finding.review_action}</div>}
                     </Card.Body>
                   </Card>
@@ -1079,9 +1189,21 @@ export default function DataQualityView() {
     }
   }, [text]);
 
+  function clearIsolationReference() {
+    setIsolationReferenceRows([]);
+    setIsolationReferenceFileName("");
+    setIsolationReferenceErr(null);
+    setIsolationConfigErr(null);
+    setIsolationConfigWarning(null);
+    setIsolationReferenceInputKey((value) => value + 1);
+  }
+
   async function readFile(file) {
     if (!file) return;
     setSelectedExampleName("");
+    setScope("auto");
+    setMode("both");
+    clearIsolationReference();
     setFileName(file.name);
     setText(await file.text());
     setResult(null);
@@ -1453,6 +1575,7 @@ export default function DataQualityView() {
     setResult(null);
     try {
       const example = await api.getDataQualityExample(name);
+      clearIsolationReference();
       setScope(example.scope);
       setMode("both");
       setSelectedExampleName(example.name);
@@ -1516,20 +1639,35 @@ export default function DataQualityView() {
 
               <div className="mb-3">
                 <Form.Label>Examples</Form.Label>
-                <div className="d-flex flex-wrap gap-2">
-                  {examples.map((example) => (
-                    <Button
-                      key={example.name}
-                      size="sm"
-                      variant={selectedExampleName === example.name ? "primary" : "outline-secondary"}
-                      disabled={!!exampleLoading}
-                      aria-pressed={selectedExampleName === example.name}
-                      title={example.file_name || example.label}
-                      onClick={() => loadExample(example.name)}
-                    >
-                      {exampleLoading === example.name && <Spinner animation="border" size="sm" className="me-1" />}
-                      {example.label}
-                    </Button>
+                <div className="d-grid gap-2">
+                  {[
+                    ["product", "Product"],
+                    ["emission", "Emission"],
+                    ["service", "Service"],
+                  ].map(([exampleScope, scopeLabel]) => (
+                    <div key={exampleScope} className="d-flex flex-wrap align-items-center gap-2">
+                      <span className="small fw-semibold text-muted" style={{ minWidth: "4.75rem" }}>
+                        {scopeLabel}
+                      </span>
+                      {examples
+                        .filter((example) => example.scope === exampleScope)
+                        .map((example) => (
+                          <Button
+                            key={example.name}
+                            size="sm"
+                            variant={selectedExampleName === example.name ? "primary" : "outline-secondary"}
+                            disabled={!!exampleLoading}
+                            aria-pressed={selectedExampleName === example.name}
+                            title={example.file_name || example.label}
+                            onClick={() => loadExample(example.name)}
+                          >
+                            {exampleLoading === example.name && (
+                              <Spinner animation="border" size="sm" className="me-1" />
+                            )}
+                            {example.label}
+                          </Button>
+                        ))}
+                    </div>
                   ))}
                 </div>
                 {examplesErr && <div className="small text-danger mt-1">Could not load examples: {examplesErr}</div>}
@@ -1607,6 +1745,7 @@ export default function DataQualityView() {
                     setSelectedExampleName("");
                     setResult(null);
                     setErr(null);
+                    clearIsolationReference();
                     if (fileInputRef.current) fileInputRef.current.value = "";
                   }}
                 >

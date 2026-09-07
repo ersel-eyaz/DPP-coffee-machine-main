@@ -39,6 +39,23 @@ class DataQualityRunEndpointTests(unittest.TestCase):
 
         self.assertEqual(422, response.status_code)
 
+    def test_example_catalog_exposes_the_chapter7_scenarios(self) -> None:
+        response = self.client.get("/data-quality/examples")
+
+        self.assertEqual(200, response.status_code)
+        examples = response.json()["examples"]
+        self.assertEqual(
+            ["p0", "p1", "p2", "p3", "e0", "e1", "e2", "e3", "s0", "s1", "s2", "s3"],
+            [example["name"] for example in examples],
+        )
+
+        scenario = self.client.get("/data-quality/examples/e2")
+        self.assertEqual(200, scenario.status_code)
+        payload = scenario.json()
+        self.assertEqual("emission", payload["scope"])
+        self.assertEqual("emission_similarity.json", payload["file_name"])
+        self.assertIn("@graph", payload["document"])
+
     def test_processing_error_returns_http_400(self) -> None:
         response = self.client.post(
             "/data-quality/run",

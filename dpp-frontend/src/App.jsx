@@ -34,7 +34,6 @@ const HEADER_STYLE = {
   alignItems: "center",
 };
 const BRAND_LINK_STYLE = { textDecoration: "none", fontWeight: 700 };
-const HEADER_LINK_STYLE = { textDecoration: "none", fontWeight: 600, color: "#334155" };
 const CONTENT_PAD_STYLE = { padding: 16 };
 
 export default function App() {
@@ -43,9 +42,6 @@ export default function App() {
       <header style={HEADER_STYLE}>
         <Link to="/" style={BRAND_LINK_STYLE}>
           DPP
-        </Link>
-        <Link to="/data-quality" style={HEADER_LINK_STYLE}>
-          Data Quality
         </Link>
       </header>
 

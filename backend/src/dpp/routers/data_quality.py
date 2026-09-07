@@ -299,45 +299,65 @@ async def _same_model_instances(selected_instance_id: str) -> tuple[str, List[DP
     return dpp_static_id, instances
 
 EXAMPLE_DOCUMENTS: Dict[str, Dict[str, str]] = {
-    "product_dirty": {
-        "label": "Product harmonization",
+    "p0": {
+        "label": "P0 Baseline",
         "scope": "product",
-        "path": "harmonization/product_dirty.json",
+        "path": "evaluation/chapter7/product_baseline.json",
     },
-    "product_anomaly": {
-        "label": "Product anomaly",
+    "p1": {
+        "label": "P1 Harmonization",
         "scope": "product",
-        "path": "harmonization/product_anomaly_input.json",
+        "path": "evaluation/chapter7/product_harmonization.json",
     },
-    "product_relation_issues": {
-        "label": "Product relation validation",
+    "p2": {
+        "label": "P2 Fuzzy matching",
         "scope": "product",
-        "path": "harmonization/product_relation_issues_input.json",
+        "path": "evaluation/chapter7/product_similarity.json",
     },
-    "emission_anomaly": {
-        "label": "Emission anomaly",
+    "p3": {
+        "label": "P3 Quality findings",
+        "scope": "product",
+        "path": "evaluation/chapter7/product_anomaly.json",
+    },
+    "e0": {
+        "label": "E0 Baseline",
         "scope": "emission",
-        "path": "harmonization/emission_anomaly_input.json",
+        "path": "evaluation/chapter7/emission_baseline.json",
     },
-    "emission_semantic": {
-        "label": "Emission semantic",
+    "e1": {
+        "label": "E1 Harmonization",
         "scope": "emission",
-        "path": "harmonization/enum_semantic_input.json",
+        "path": "evaluation/chapter7/emission_harmonization.json",
     },
-    "service_text": {
-        "label": "Service text",
-        "scope": "service",
-        "path": "harmonization/service_text_input.json",
+    "e2": {
+        "label": "E2 Fuzzy & semantic",
+        "scope": "emission",
+        "path": "evaluation/chapter7/emission_similarity.json",
     },
-    "service_semantic": {
-        "label": "Service semantic",
-        "scope": "service",
-        "path": "harmonization/service_semantic_input.json",
+    "e3": {
+        "label": "E3 Quality findings",
+        "scope": "emission",
+        "path": "evaluation/chapter7/emission_anomaly.json",
     },
-    "service_anomaly": {
-        "label": "Service anomaly",
+    "s0": {
+        "label": "S0 Baseline",
         "scope": "service",
-        "path": "harmonization/service_anomaly_input.json",
+        "path": "evaluation/chapter7/service_baseline.json",
+    },
+    "s1": {
+        "label": "S1 Harmonization & review",
+        "scope": "service",
+        "path": "evaluation/chapter7/service_harmonization.json",
+    },
+    "s2": {
+        "label": "S2 Fuzzy & semantic",
+        "scope": "service",
+        "path": "evaluation/chapter7/service_similarity.json",
+    },
+    "s3": {
+        "label": "S3 Structure & replacement",
+        "scope": "service",
+        "path": "evaluation/chapter7/service_structure.json",
     },
 }
 
