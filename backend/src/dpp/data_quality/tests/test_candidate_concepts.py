@@ -120,6 +120,27 @@ class CandidateConceptEvidenceReportTests(unittest.TestCase):
         self.assertIsNotNone(quality["approximate_silhouette"])
         self.assertIn("not a validated performance score", quality["metric_note"])
 
+    def test_approximate_silhouette_assigns_zero_to_singleton_clusters(self) -> None:
+        report = build_candidate_concept_evidence_report(
+            (
+                unresolved_service_observation(
+                    observation_id="a",
+                    kind="diagnosis",
+                    text="ceramic burr resonance",
+                ),
+                unresolved_service_observation(
+                    observation_id="b",
+                    kind="diagnosis",
+                    text="violet display pulse",
+                ),
+            ),
+            cluster_similarity_threshold=0.72,
+        )
+        quality = report.as_dict()["clustering_quality"]
+
+        self.assertEqual(2, quality["singleton_clusters_total"])
+        self.assertEqual(0.0, quality["approximate_silhouette"])
+
     def test_historical_selection_rechecks_resolved_and_keeps_unresolved_with_provenance(self) -> None:
         selection = select_unresolved_historical_observations(
             (

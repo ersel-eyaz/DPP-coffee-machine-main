@@ -569,13 +569,14 @@ def _approximate_silhouette_scores(clusters: list[CandidateConceptCluster]) -> l
                 for other in cluster.observations
                 if other.observation_id != observation.observation_id
             ]
+            if not own_neighbors:
+                scores.append(0.0)
+                continue
             own_distance = (
                 1.0 - (_mean_or_none([
                     _text_similarity(observation.text, other.text)
                     for other in own_neighbors
                 ]) or 0.0)
-                if own_neighbors
-                else 0.0
             )
             other_distances: list[float] = []
             for other_cluster in clusters:
